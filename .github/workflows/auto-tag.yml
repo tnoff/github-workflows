@@ -1,0 +1,12 @@
+name: Auto Tag on Merge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    uses: ./.github/workflows/tag.yml

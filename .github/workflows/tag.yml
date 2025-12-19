@@ -1,0 +1,52 @@
+name: Tag commit on VERSION file
+
+on:
+  workflow_call:
+    inputs:
+      version_file:
+        description: 'Path to VERSION file'
+        required: false
+        type: string
+        default: './VERSION'
+    outputs:
+      version:
+        description: 'Version read from VERSION file (with v prefix)'
+        value: ${{ jobs.tag_build.outputs.version }}
+      tag_created:
+        description: 'Whether a new tag was created (true/false)'
+        value: ${{ jobs.tag_build.outputs.tag_created }}
+      tag_exists:
+        description: 'Whether the tag already existed (true/false)'
+        value: ${{ jobs.tag_build.outputs.tag_exists }}
+
+jobs:
+  tag_build:
+    name: Tag Build if doesn't exist already
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_created: ${{ steps.check-tag.outputs.exists != 'true' }}
+      tag_exists: ${{ steps.check-tag.outputs.exists }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Get version
+        id: version
+        run: echo "version=v$(cat ${{ inputs.version_file }})" >> $GITHUB_OUTPUT
+      - name: Check If Tag already exists
+        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9
+        id: check-tag
+        with:
+          tag: ${{ steps.version.outputs.version }}
+      - run: echo "Tag exists!"
+        if: steps.check-tag.outputs.exists == 'true'
+      - name: Add tag
+        id: tag-version
+        if: steps.check-tag.outputs.exists != 'true'
+        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ steps.version.outputs.version }}
+          tag_prefix: ''
