@@ -14,11 +14,10 @@ Application repositories use similar CI/CD logic for building Docker images and 
 
 ```
 github-workflows/
-├── .github/workflows/
-│   ├── reusable/               # Reusable workflows (the core product)
-│   │   ├── ocir-push.yml       # Main workflow for Docker builds
-│   │   └── tag.yml             # Workflow for creating Git tags from VERSION file
-│   └── auto-tag.yml            # Repo-specific workflow for auto-tagging releases
+├── .github/workflows/          # GitHub Actions workflows
+│   ├── ocir-push.yml           # Reusable: Docker build & push workflow
+│   ├── tag.yml                 # Reusable: Auto-tagging workflow
+│   └── auto-tag.yml            # Repo-specific: Tags this repository on merge
 ├── README.md                   # User-facing documentation
 ├── DEVELOPMENT.md              # Development setup and workflow validation
 └── AGENTS.md                   # This file
@@ -44,7 +43,7 @@ github-workflows/
 jobs:
   build-check:
     if: github.event_name == 'pull_request'
-    uses: tnoff/github-workflows/.github/workflows/reusable/ocir-push.yml@v1
+    uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
     with:
       image_name: my-app
       registry_namespace: my-namespace

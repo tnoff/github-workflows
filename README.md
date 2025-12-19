@@ -6,11 +6,11 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 
 ## Available Workflows
 
-### `reusable/ocir-push.yml`
+### `ocir-push.yml`
 
 Builds and pushes Docker images to OCI Container Registry (OCIR) with version tagging from a VERSION file.
 
-### `reusable/tag.yml`
+### `tag.yml`
 
 Creates Git tags based on the VERSION file. Automatically checks if a tag already exists before creating a new one.
 
@@ -37,7 +37,7 @@ jobs:
   # Build and test on PRs (don't push)
   build-check:
     if: github.event_name == 'pull_request'
-    uses: tnoff/github-workflows/.github/workflows/reusable/ocir-push.yml@v1
+    uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
     with:
       image_name: my-app
       push_image: false  # Don't push on PRs
@@ -49,7 +49,7 @@ jobs:
   # Build and push on main branch
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: tnoff/github-workflows/.github/workflows/reusable/ocir-push.yml@v1
+    uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
     with:
       image_name: my-app
       platforms: linux/amd64,linux/arm64

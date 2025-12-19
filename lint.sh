@@ -26,7 +26,7 @@ echo "🔍 Linting GitHub Actions workflows..."
 echo ""
 
 # Run actionlint on all workflow files
-actionlint .github/workflows/*.yml .github/workflows/reusable/*.yml
+actionlint .github/workflows/*.yml
 
 if [ $? -eq 0 ]; then
     echo ""

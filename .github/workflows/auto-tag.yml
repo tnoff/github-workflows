@@ -9,4 +9,4 @@ permissions:
 
 jobs:
   create-tag:
-    uses: ./.github/workflows/reusable/tag.yml
+    uses: ./.github/workflows/tag.yml
