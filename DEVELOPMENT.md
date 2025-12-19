@@ -117,7 +117,7 @@ make check-actionlint
 actionlint .github/workflows/*.yml
 
 # Lint a specific workflow
-actionlint .github/workflows/ocir-push.yml
+actionlint .github/workflows/reusable/ocir-push.yml
 
 # Verbose output
 actionlint -verbose .github/workflows/*.yml
@@ -146,7 +146,7 @@ actionlint validates:
 When issues are found:
 
 ```
-.github/workflows/ocir-push.yml:48:20: property "build" is not defined in object type {build-and-push: {outputs: {image_tags: string; version: string}}} [expression]
+.github/workflows/reusable/ocir-push.yml:48:20: property "build" is not defined in object type {build-and-push: {outputs: {image_tags: string; version: string}}} [expression]
    |
 48 |         value: ${{ jobs.build.outputs.version }}
    |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -215,7 +215,7 @@ pre-commit run
 pre-commit run actionlint --all-files
 
 # Run on specific files
-pre-commit run --files .github/workflows/ocir-push.yml
+pre-commit run --files .github/workflows/reusable/ocir-push.yml
 ```
 
 ### Bypassing Hooks
@@ -268,8 +268,11 @@ curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
 # List available workflows
 act -l
 
-# Run a specific workflow
+# Run a specific workflow (repo-specific)
 act -W .github/workflows/auto-tag.yml
+
+# Run a reusable workflow (requires caller workflow)
+act -W .github/workflows/reusable/ocir-push.yml
 
 # Run with secrets
 act -s OCI_REGISTRY=iad.ocir.io/namespace -s OCI_USERNAME=user
@@ -355,7 +358,7 @@ When releasing a new version of the workflows:
 
 3. Consuming repositories can then update their workflow references:
    ```yaml
-   uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v0.0.2
+   uses: tnoff/github-workflows/.github/workflows/reusable/ocir-push.yml@v0.0.2
    ```
 
 ## Troubleshooting

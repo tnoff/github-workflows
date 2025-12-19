@@ -19,11 +19,11 @@ install-actionlint: ## Install actionlint
 
 lint: check-actionlint ## Lint all GitHub Actions workflows
 	@echo "Linting GitHub Actions workflows..."
-	@actionlint .github/workflows/*.yml
+	@actionlint .github/workflows/*.yml .github/workflows/reusable/*.yml
 
 lint-verbose: check-actionlint ## Lint workflows with verbose output
 	@echo "Linting GitHub Actions workflows (verbose)..."
-	@actionlint -verbose .github/workflows/*.yml
+	@actionlint -verbose .github/workflows/*.yml .github/workflows/reusable/*.yml
 
 lint-json: check-actionlint ## Lint workflows and output JSON
-	@actionlint -format '{{json .}}' .github/workflows/*.yml
+	@actionlint -format '{{json .}}' .github/workflows/*.yml .github/workflows/reusable/*.yml
