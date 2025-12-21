@@ -27,11 +27,6 @@ on:
         required: false
         type: string
         default: './VERSION'
-      push_image:
-        description: 'Whether to push the image (false for PR builds)'
-        required: false
-        type: boolean
-        default: true
     secrets:
       oci_registry:
         description: 'OCI Registry URL (e.g., iad.ocir.io)'
@@ -106,7 +101,7 @@ jobs:
           context: ${{ inputs.docker_context }}
           file: ${{ inputs.dockerfile_path }}
           platforms: ${{ inputs.platforms }}
-          push: ${{ inputs.push_image }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -120,7 +115,6 @@ jobs:
           echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Commit SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Platforms:** \`${{ inputs.platforms }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Pushed:** \`${{ inputs.push_image }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🏷️ Tags" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

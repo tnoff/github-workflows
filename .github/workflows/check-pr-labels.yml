@@ -1,0 +1,127 @@
+name: Check PR Labels and Conditions
+
+on:
+  workflow_call:
+    inputs:
+      required_labels:
+        description: 'Comma-separated list of labels required (e.g., "build-docker,deploy")'
+        required: false
+        type: string
+        default: 'build-docker'
+      require_all_labels:
+        description: 'If true, PR must have ALL specified labels. If false, ANY label is sufficient.'
+        required: false
+        type: boolean
+        default: false
+      require_merged:
+        description: 'If true, PR must be merged. If false, just check labels.'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      conditions_met:
+        description: 'Whether all conditions are met (true/false)'
+        value: ${{ jobs.check.outputs.conditions_met }}
+      pr_merged:
+        description: 'Whether the PR was merged (true/false)'
+        value: ${{ jobs.check.outputs.pr_merged }}
+      has_required_labels:
+        description: 'Whether the PR has required labels (true/false)'
+        value: ${{ jobs.check.outputs.has_labels }}
+      pr_labels:
+        description: 'Comma-separated list of PR labels'
+        value: ${{ jobs.check.outputs.labels }}
+
+jobs:
+  check:
+    name: Check merge and labels
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      conditions_met: ${{ steps.evaluate.outputs.conditions_met }}
+      pr_merged: ${{ steps.evaluate.outputs.pr_merged }}
+      has_labels: ${{ steps.evaluate.outputs.has_labels }}
+      labels: ${{ steps.pr-labels.outputs.labels }}
+    steps:
+      - name: Get PR labels
+        id: pr-labels
+        uses: joerick/pr-labels-action@e61c643fe47e53d3495405cc9f441b5da06ab1e9
+
+      - name: Evaluate build conditions
+        id: evaluate
+        run: |
+          # Get PR merge status
+          PR_MERGED="${{ github.event.pull_request.merged }}"
+          echo "pr_merged=${PR_MERGED}" >> $GITHUB_OUTPUT
+
+          # Get PR labels
+          PR_LABELS="${{ steps.pr-labels.outputs.labels }}"
+          echo "PR labels: ${PR_LABELS}"
+
+          # Parse required labels
+          REQUIRED_LABELS="${{ inputs.required_labels }}"
+          echo "Required labels: ${REQUIRED_LABELS}"
+
+          # Check label requirements
+          HAS_LABELS="false"
+
+          if [ "${{ inputs.require_all_labels }}" = "true" ]; then
+            # ALL labels must be present
+            HAS_LABELS="true"
+            IFS=',' read -ra LABEL_ARRAY <<< "${REQUIRED_LABELS}"
+            for label in "${LABEL_ARRAY[@]}"; do
+              label=$(echo "$label" | xargs)  # Trim whitespace
+              if [[ ! ",${PR_LABELS}," =~ ",${label}," ]]; then
+                echo "Missing required label: ${label}"
+                HAS_LABELS="false"
+                break
+              fi
+            done
+          else
+            # ANY label is sufficient
+            IFS=',' read -ra LABEL_ARRAY <<< "${REQUIRED_LABELS}"
+            for label in "${LABEL_ARRAY[@]}"; do
+              label=$(echo "$label" | xargs)  # Trim whitespace
+              if [[ ",${PR_LABELS}," =~ ",${label}," ]]; then
+                echo "Found required label: ${label}"
+                HAS_LABELS="true"
+                break
+              fi
+            done
+          fi
+
+          echo "has_labels=${HAS_LABELS}" >> $GITHUB_OUTPUT
+
+          # Determine if conditions are met
+          CONDITIONS_MET="false"
+
+          if [ "${{ inputs.require_merged }}" = "true" ]; then
+            # Both merged AND labels required
+            if [ "${PR_MERGED}" = "true" ] && [ "${HAS_LABELS}" = "true" ]; then
+              CONDITIONS_MET="true"
+            fi
+          else
+            # Only labels required
+            if [ "${HAS_LABELS}" = "true" ]; then
+              CONDITIONS_MET="true"
+            fi
+          fi
+
+          echo "conditions_met=${CONDITIONS_MET}" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "## 🔍 PR Condition Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Merged:** \`${PR_MERGED}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Required Labels:** \`${REQUIRED_LABELS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Labels:** \`${PR_LABELS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has Required Labels:** \`${HAS_LABELS}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Conditions Met:** \`${CONDITIONS_MET}\`" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${CONDITIONS_MET}" = "true" ]; then
+            echo "✅ All conditions met" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Conditions not met" >> $GITHUB_STEP_SUMMARY
+          fi
