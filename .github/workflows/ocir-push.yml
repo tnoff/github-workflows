@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
-      image_tags: ${{ steps.meta.outputs.tags }}
+      image_tags: ${{ steps.extract-tags.outputs.tag_names }}
     permissions:
       contents: read
     steps:
@@ -109,6 +109,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract tag names
+        id: extract-tags
+        run: |
+          # Extract just the tag names (part after the last colon) from full image paths
+          TAG_NAMES=$(echo "${{ steps.meta.outputs.tags }}" | sed 's/.*://g' | tr '\n' ',')
+          echo "tag_names=${TAG_NAMES%,}" >> $GITHUB_OUTPUT
+          echo "Extracted tag names: ${TAG_NAMES%,}"
 
       - name: Image summary
         run: |

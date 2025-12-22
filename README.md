@@ -72,7 +72,7 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `version` | Version read from VERSION file |
-| `image_tags` | Full image tags that were built |
+| `image_tags` | Comma-separated list of tag names (e.g., `0.0.4,abc1234,latest`) |
 
 ## Tagging Strategy
 
