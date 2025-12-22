@@ -37,6 +37,9 @@ on:
       oci_password:
         description: 'OCI Password/Auth Token'
         required: true
+      oci_namespace:
+        description: 'OCIR Namespace'
+        required: true
     outputs:
       version:
         description: 'Version read from VERSION file'
@@ -83,7 +86,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
-          images: ${{ secrets.oci_registry }}/${{ inputs.image_name }}
+          images: ${{ secrets.oci_registry }}/${{ secrets.oci_namespace }}/${{ inputs.image_name }}
           tags: |
             # Use VERSION file for version tag
             type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != 'unset' }}
