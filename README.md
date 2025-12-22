@@ -57,6 +57,10 @@ jobs:
 | `version` | Version read from VERSION file |
 | `image_tags` | Comma-separated list of tag names (e.g., `0.0.4,abc1234,latest`) |
 
+**Permissions:**
+
+No special permissions required. The workflow uses `contents: read` internally to checkout code and read the VERSION file.
+
 
 ### `tag.yml`
 
@@ -83,6 +87,18 @@ jobs:
 | `version` | Version from file with `v` prefix (e.g., `v0.0.4`) |
 | `tag_created` | `true` if a new tag was created, `false` if skipped |
 | `tag_exists` | `true` if tag already existed, `false` if new |
+
+**Permissions:**
+
+The calling workflow must grant `contents: write` permission to create Git tags:
+
+```yaml
+jobs:
+  create-tag:
+    permissions:
+      contents: write
+    uses: tnoff/github-workflows/.github/workflows/tag.yml@v1
+```
 
 ### `check-pr-labels.yml`
 
@@ -131,3 +147,16 @@ jobs:
 | `pr_merged` | `true` if PR was merged |
 | `has_required_labels` | `true` if PR has required labels |
 | `pr_labels` | Comma-separated list of all PR labels |
+
+**Permissions:**
+
+The calling workflow must grant `pull-requests: read` permission to access PR labels:
+
+```yaml
+jobs:
+  check-build:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: tnoff/github-workflows/.github/workflows/check-pr-labels.yml@v1
+```

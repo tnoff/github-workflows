@@ -50,3 +50,15 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           custom_tag: ${{ steps.version.outputs.version }}
           tag_prefix: ''
+
+      - name: Summary
+        run: |
+          echo "## 🏷️ Git Tag Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check-tag.outputs.exists }}" = "true" ]; then
+            echo "ℹ️ Tag already exists - no new tag created" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ New tag created successfully" >> $GITHUB_STEP_SUMMARY
+          fi
