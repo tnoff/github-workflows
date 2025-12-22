@@ -34,8 +34,8 @@ on:
       oci_username:
         description: 'OCI Username'
         required: true
-      oci_password:
-        description: 'OCI Password/Auth Token'
+      oci_token:
+        description: 'OCI Auth Token'
         required: true
       oci_namespace:
         description: 'OCIR Namespace'
@@ -80,7 +80,7 @@ jobs:
         with:
           registry: ${{ secrets.oci_registry }}
           username: ${{ secrets.oci_username }}
-          password: ${{ secrets.oci_password }}
+          password: ${{ secrets.oci_token }}
 
       - name: Generate Docker metadata
         id: meta

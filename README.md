@@ -44,7 +44,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 ```
 
 **Inputs:**
@@ -61,9 +62,10 @@ jobs:
 
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `oci_registry` | ✅ | OCI Registry URL with namespace (e.g., `iad.ocir.io/my-namespace`) |
+| `oci_registry` | ✅ | OCI Registry URL (e.g., `iad.ocir.io`) |
 | `oci_username` | ✅ | OCI Username |
-| `oci_password` | ✅ | OCI Password/Auth Token |
+| `oci_token` | ✅ | OCI Auth Token |
+| `oci_namespace` | ✅ | OCIR Namespace |
 
 **Outputs:**
 
@@ -81,7 +83,7 @@ The workflow generates the following Docker image tags when called:
 - `latest` - Always points to the most recent build
 
 ### Example Tags
-If VERSION file contains `0.0.4` and commit SHA is `abc1234567890def`, with `OCI_REGISTRY` set to `iad.ocir.io/my-namespace`:
+If VERSION file contains `0.0.4` and commit SHA is `abc1234567890def`, with `OCI_REGISTRY` set to `iad.ocir.io` and `OCI_NAMESPACE` set to `my-namespace`:
 ```
 iad.ocir.io/my-namespace/my-app:0.0.4
 iad.ocir.io/my-namespace/my-app:abc1234
@@ -114,9 +116,10 @@ Create a `VERSION` file in the root of your repository:
 2. **Create `.github/workflows/ci.yml`** in your app repository using the example above
 
 3. **Ensure secrets are configured** in your repository:
-   - `OCI_REGISTRY` - Your OCIR URL with namespace (e.g., `iad.ocir.io/my-namespace`)
+   - `OCI_REGISTRY` - Your OCIR URL (e.g., `iad.ocir.io`)
    - `OCI_USERNAME` - Your OCIR username
-   - `OCI_PASSWORD` - Your OCIR auth token
+   - `OCI_TOKEN` - Your OCIR auth token
+   - `OCI_NAMESPACE` - Your OCIR namespace
 
    These are typically injected by terraform via the `infra` workspace.
 
@@ -146,7 +149,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 
   # Automatically tag the commit with version from VERSION file
   create-tag:
@@ -315,7 +319,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 
   # 2. Create Git tag from VERSION file
   tag:
@@ -332,7 +337,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 
   # 4. Deploy to staging (always)
   deploy-staging:
@@ -389,7 +395,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 ```
 
 ### Configuration
@@ -494,7 +501,8 @@ jobs:
     secrets:
       oci_registry: ${{ secrets.OCI_REGISTRY }}
       oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 
   # Notify when build is skipped
   notify-skip:
