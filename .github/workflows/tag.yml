@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: './VERSION'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
     outputs:
       version:
         description: 'Version read from VERSION file (with v prefix)'
@@ -22,7 +32,11 @@ on:
 jobs:
   tag_build:
     name: Tag Build if doesn't exist already
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
     outputs:
