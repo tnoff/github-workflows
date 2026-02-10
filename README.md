@@ -40,6 +40,7 @@ jobs:
 | `docker_context` | ❌ | `.` | Docker build context |
 | `platforms` | ❌ | `linux/amd64,linux/arm64` | Platforms to build |
 | `version_file` | ❌ | `./VERSION` | Path to VERSION file |
+| `tag_version` | ❌ | `false` | Tag image with version from VERSION file and `latest` (default: only commit SHA) |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 | `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
 

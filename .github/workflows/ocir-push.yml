@@ -32,6 +32,11 @@ on:
         required: false
         type: string
         default: '["ubuntu-24.04"]'
+      tag_version:
+        description: 'Tag image with version from VERSION file and latest (default: only commit SHA)'
+        required: false
+        type: boolean
+        default: false
       allow_fork_prs:
         description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
         required: false
@@ -96,18 +101,28 @@ jobs:
           username: ${{ secrets.oci_username }}
           password: ${{ secrets.oci_token }}
 
+      - name: Check if version tag is enabled
+        id: version-tag
+        run: |
+          if [ "${{ inputs.tag_version }}" = "true" ] && \
+             [ "${{ steps.version.outputs.version }}" != "unset" ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
           images: ${{ secrets.oci_registry }}/${{ secrets.oci_namespace }}/${{ inputs.image_name }}
           tags: |
-            # Use VERSION file for version tag
-            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != 'unset' }}
             # Always add commit SHA (short)
             type=sha,prefix=,format=short
-            # Add 'latest' only on main branch push
-            type=raw,value=latest
+            # Use VERSION file for version tag (only when tag_version is true)
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version-tag.outputs.enabled }}
+            # Add 'latest' (only when tag_version is true)
+            type=raw,value=latest,enable=${{ inputs.tag_version }}
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
