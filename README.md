@@ -168,6 +168,75 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/check-pr-labels.yml@v1
 ```
 
+### `dependabot-auto-approve.yml`
+
+Automatically approves and optionally enables auto-merge for Dependabot PRs based on update type (major/minor/patch) and package allow/reject lists. Only runs when the PR author is `dependabot[bot]`.
+
+```yaml
+# In your app repository: .github/workflows/dependabot.yml
+name: Dependabot Auto Approve
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  auto-approve:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'minor,patch'
+      reject_packages: 'some-risky-package,another-package'
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `allowed_update_types` | ❌ | `minor,patch` | Comma-separated semver levels to auto-approve: `major`, `minor`, `patch` |
+| `reject_packages` | ❌ | `''` | Comma-separated packages to never auto-approve (takes priority over accept list) |
+| `accept_packages` | ❌ | `''` | Comma-separated packages to exclusively auto-approve. If empty, all packages not in the reject list are eligible. |
+| `auto_merge` | ❌ | `true` | Enable auto-merge once required checks pass (requires "Allow auto-merge" in repo settings) |
+| `merge_method` | ❌ | `squash` | Merge method: `merge`, `squash`, or `rebase` |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `approved` | `true` if the PR was approved, `false` if skipped |
+| `reason` | Human-readable explanation of the decision |
+
+**Permissions:**
+
+The workflow requires `pull-requests: write` to approve and `contents: write` to enable auto-merge. These are granted internally — no extra configuration needed in the calling workflow.
+
+> **Note:** Auto-merge (`auto_merge: true`) requires "Allow auto-merge" to be enabled in your repository settings under **Settings → General → Pull Requests**.
+
+**Examples:**
+
+Patch-only, no restrictions:
+```yaml
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'patch'
+```
+
+Allow minor/patch but block specific packages:
+```yaml
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'minor,patch'
+      reject_packages: 'openssl,cryptography'
+```
+
+Only auto-approve a specific set of trusted packages (all update levels):
+```yaml
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'major,minor,patch'
+      accept_packages: 'boto3,requests,pydantic'
+```
+
 ## Self-Hosted Runners
 
 All workflows support self-hosted runners via the `runner_labels` input. When using self-hosted runners on public repositories, set `allow_fork_prs: false` to prevent fork PRs from executing workflows on your infrastructure.
