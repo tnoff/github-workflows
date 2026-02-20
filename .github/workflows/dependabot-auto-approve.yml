@@ -1,0 +1,190 @@
+name: Dependabot Auto Approve
+
+on:
+  workflow_call:
+    inputs:
+      allowed_update_types:
+        description: 'Comma-separated semver levels to auto-approve: major, minor, patch'
+        required: false
+        type: string
+        default: 'minor,patch'
+      reject_packages:
+        description: 'Comma-separated packages to never auto-approve (takes priority over accept list)'
+        required: false
+        type: string
+        default: ''
+      accept_packages:
+        description: >-
+          Comma-separated packages to exclusively auto-approve.
+          If empty, all packages not in the reject list are eligible.
+        required: false
+        type: string
+        default: ''
+      auto_merge:
+        description: 'Enable auto-merge once required checks pass (requires auto-merge enabled in repo settings)'
+        required: false
+        type: boolean
+        default: true
+      merge_method:
+        description: 'Merge method when auto-merging: merge, squash, or rebase'
+        required: false
+        type: string
+        default: 'squash'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    outputs:
+      approved:
+        description: 'Whether the PR was approved (true/false)'
+        value: ${{ jobs.evaluate.outputs.approved }}
+      reason:
+        description: 'Human-readable reason for the approval decision'
+        value: ${{ jobs.evaluate.outputs.reason }}
+
+jobs:
+  evaluate:
+    name: Evaluate and approve Dependabot PR
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      approved: ${{ steps.evaluate.outputs.approved }}
+      reason: ${{ steps.evaluate.outputs.reason }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Evaluate approval conditions
+        id: evaluate
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+          ALLOWED_UPDATE_TYPES: ${{ inputs.allowed_update_types }}
+          REJECT_PACKAGES: ${{ inputs.reject_packages }}
+          ACCEPT_PACKAGES: ${{ inputs.accept_packages }}
+        run: |
+          # Extract semver level from "version-update:semver-<level>"
+          SEMVER_LEVEL=$(echo "${UPDATE_TYPE}" | sed 's/version-update:semver-//')
+          echo "Semver level: ${SEMVER_LEVEL}"
+          echo "Packages: ${DEPENDENCY_NAMES}"
+          echo "Allowed types: ${ALLOWED_UPDATE_TYPES}"
+
+          # --- Check update type ---
+          TYPE_ALLOWED="false"
+          IFS=',' read -ra ALLOWED_ARRAY <<< "${ALLOWED_UPDATE_TYPES}"
+          for allowed in "${ALLOWED_ARRAY[@]}"; do
+            allowed=$(echo "$allowed" | xargs)
+            if [ "${SEMVER_LEVEL}" = "${allowed}" ]; then
+              TYPE_ALLOWED="true"
+              break
+            fi
+          done
+
+          if [ "${TYPE_ALLOWED}" = "false" ]; then
+            REASON="Skipped: '${SEMVER_LEVEL}' updates not in allowed list (${ALLOWED_UPDATE_TYPES})"
+            echo "approved=false" >> $GITHUB_OUTPUT
+            echo "reason=${REASON}" >> $GITHUB_OUTPUT
+            echo "Decision: ${REASON}"
+            exit 0
+          fi
+
+          # --- Check each package against reject/accept lists ---
+          # dependency-names is comma-separated (may include spaces)
+          PACKAGE_APPROVED="true"
+          REASON=""
+
+          IFS=',' read -ra PACKAGES <<< "${DEPENDENCY_NAMES}"
+          for pkg in "${PACKAGES[@]}"; do
+            pkg=$(echo "$pkg" | xargs)  # trim whitespace
+            [ -z "$pkg" ] && continue
+
+            # Reject list takes priority
+            if [ -n "${REJECT_PACKAGES}" ]; then
+              IFS=',' read -ra REJECT_ARRAY <<< "${REJECT_PACKAGES}"
+              for rejected in "${REJECT_ARRAY[@]}"; do
+                rejected=$(echo "$rejected" | xargs)
+                if [ "${pkg}" = "${rejected}" ]; then
+                  REASON="Skipped: '${pkg}' is in the reject list"
+                  PACKAGE_APPROVED="false"
+                  break 2
+                fi
+              done
+            fi
+
+            # Accept list: if non-empty, package must appear in it
+            if [ -n "${ACCEPT_PACKAGES}" ]; then
+              FOUND_IN_ACCEPT="false"
+              IFS=',' read -ra ACCEPT_ARRAY <<< "${ACCEPT_PACKAGES}"
+              for accepted in "${ACCEPT_ARRAY[@]}"; do
+                accepted=$(echo "$accepted" | xargs)
+                if [ "${pkg}" = "${accepted}" ]; then
+                  FOUND_IN_ACCEPT="true"
+                  break
+                fi
+              done
+              if [ "${FOUND_IN_ACCEPT}" = "false" ]; then
+                REASON="Skipped: '${pkg}' not in the accept list"
+                PACKAGE_APPROVED="false"
+                break
+              fi
+            fi
+          done
+
+          if [ "${PACKAGE_APPROVED}" = "false" ]; then
+            echo "approved=false" >> $GITHUB_OUTPUT
+            echo "reason=${REASON}" >> $GITHUB_OUTPUT
+            echo "Decision: ${REASON}"
+            exit 0
+          fi
+
+          REASON="Approved: ${SEMVER_LEVEL} update for ${DEPENDENCY_NAMES}"
+          echo "approved=true" >> $GITHUB_OUTPUT
+          echo "reason=${REASON}" >> $GITHUB_OUTPUT
+          echo "Decision: ${REASON}"
+
+      - name: Approve PR
+        if: steps.evaluate.outputs.approved == 'true'
+        run: gh pr review --approve "${{ github.event.pull_request.html_url }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge
+        if: steps.evaluate.outputs.approved == 'true' && inputs.auto_merge
+        run: gh pr merge --auto --${{ inputs.merge_method }} "${{ github.event.pull_request.html_url }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          APPROVED="${{ steps.evaluate.outputs.approved }}"
+          REASON="${{ steps.evaluate.outputs.reason }}"
+
+          echo "## Dependabot Auto Approve Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package(s):** \`${{ steps.metadata.outputs.dependency-names }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update type:** \`${{ steps.metadata.outputs.update-type }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Allowed types:** \`${{ inputs.allowed_update_types }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.reject_packages }}" ]; then
+            echo "- **Reject list:** \`${{ inputs.reject_packages }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -n "${{ inputs.accept_packages }}" ]; then
+            echo "- **Accept list:** \`${{ inputs.accept_packages }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${APPROVED}" = "true" ]; then
+            echo "**Approved** - ${REASON}" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs.auto_merge }}" = "true" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Auto-merge enabled (method: \`${{ inputs.merge_method }}\`)" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "**Skipped** - ${REASON}" >> $GITHUB_STEP_SUMMARY
+          fi
