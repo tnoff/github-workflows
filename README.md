@@ -170,7 +170,9 @@ jobs:
 
 ### `dependabot-auto-approve.yml`
 
-Automatically approves and optionally enables auto-merge for Dependabot PRs based on update type (major/minor/patch) and package allow/reject lists. Only runs when the PR author is `dependabot[bot]`.
+Automatically approves and optionally enables auto-merge for Dependabot PRs based on update type (major/minor/patch), package allow/reject lists, and changed file paths. Only runs when the PR author is `dependabot[bot]`.
+
+Each call to this workflow is an independent rule. Compose multiple jobs in your calling workflow to express "approve this set of packages under these conditions OR approve that set under those conditions" — since approval and auto-merge are both idempotent, multiple jobs approving the same PR is harmless.
 
 ```yaml
 # In your app repository: .github/workflows/dependabot.yml
@@ -195,7 +197,9 @@ jobs:
 | `allowed_update_types` | ❌ | `minor,patch` | Comma-separated semver levels to auto-approve: `major`, `minor`, `patch` |
 | `reject_packages` | ❌ | `''` | Comma-separated packages to never auto-approve (takes priority over accept list) |
 | `accept_packages` | ❌ | `''` | Comma-separated packages to exclusively auto-approve. If empty, all packages not in the reject list are eligible. |
+| `file_pattern` | ❌ | `''` | Glob pattern matched against changed file paths (e.g. `tests/**`). If set, at least one changed file must match for the PR to be eligible. If empty, no file filter is applied. |
 | `auto_merge` | ❌ | `true` | Enable auto-merge once required checks pass (requires "Allow auto-merge" in repo settings) |
+| `auto_merge_packages` | ❌ | `''` | Regex pattern that ALL packages must match to enable auto-merge. If empty, all approved PRs are eligible for auto-merge. |
 | `merge_method` | ❌ | `squash` | Merge method: `merge`, `squash`, or `rebase` |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 
@@ -211,6 +215,8 @@ jobs:
 The workflow requires `pull-requests: write` to approve and `contents: write` to enable auto-merge. These are granted internally — no extra configuration needed in the calling workflow.
 
 > **Note:** Auto-merge (`auto_merge: true`) requires "Allow auto-merge" to be enabled in your repository settings under **Settings → General → Pull Requests**.
+>
+> **Note on CODEOWNERS:** The `github-actions[bot]` approval from this workflow does not count toward CODEOWNERS-required reviews. If your branch protection requires a CODEOWNERS review, you will need a PAT from a user listed in CODEOWNERS, or restructure protection to use required status checks instead.
 
 **Examples:**
 
@@ -235,6 +241,30 @@ Only auto-approve a specific set of trusted packages (all update levels):
     with:
       allowed_update_types: 'major,minor,patch'
       accept_packages: 'boto3,requests,pydantic'
+```
+
+Multi-rule: unrestricted for known-safe packages, patch-only for everything else, and auto-merge anything under `tests/`:
+```yaml
+jobs:
+  # boto3 and friends: approve all semver levels
+  auto-approve-boto3:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      accept_packages: 'boto3,botocore,aiobotocore'
+      allowed_update_types: 'major,minor,patch'
+
+  # test dependencies: approve all semver levels, filtered by path
+  auto-approve-test-reqs:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      file_pattern: 'tests/**'
+      allowed_update_types: 'major,minor,patch'
+
+  # everything else: patch only
+  auto-approve-patch:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'patch'
 ```
 
 ## Self-Hosted Runners
