@@ -20,11 +20,26 @@ on:
         required: false
         type: string
         default: ''
+      file_pattern:
+        description: >-
+          Glob pattern matched against changed file paths in the PR.
+          If set, at least one changed file must match for the PR to be eligible.
+          If empty, no file filter is applied.
+        required: false
+        type: string
+        default: ''
       auto_merge:
         description: 'Enable auto-merge once required checks pass (requires auto-merge enabled in repo settings)'
         required: false
         type: boolean
         default: true
+      auto_merge_packages:
+        description: >-
+          Regex pattern that ALL packages in the PR must match to enable auto-merge.
+          If empty, all approved PRs are eligible for auto-merge.
+        required: false
+        type: string
+        default: ''
       merge_method:
         description: 'Merge method when auto-merging: merge, squash, or rebase'
         required: false
@@ -54,6 +69,7 @@ jobs:
     outputs:
       approved: ${{ steps.evaluate.outputs.approved }}
       reason: ${{ steps.evaluate.outputs.reason }}
+      auto_merge_eligible: ${{ steps.evaluate.outputs.auto_merge_eligible }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -61,14 +77,46 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check changed file paths
+        id: check-files
+        env:
+          FILE_PATTERN: ${{ inputs.file_pattern }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${FILE_PATTERN}" ]; then
+            echo "matched=true" >> $GITHUB_OUTPUT
+            echo "No file pattern set, skipping file check"
+            exit 0
+          fi
+
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          FILES=$(gh pr view "${PR_URL}" --json files --jq '[.files[].path] | join("\n")')
+          echo "Changed files:"
+          echo "${FILES}"
+
+          MATCHED="false"
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if [[ "$file" == ${FILE_PATTERN} ]]; then
+              echo "Matched: '${file}' matches pattern '${FILE_PATTERN}'"
+              MATCHED="true"
+              break
+            fi
+          done <<< "${FILES}"
+
+          [ "${MATCHED}" = "false" ] && echo "No files matched pattern '${FILE_PATTERN}'"
+          echo "matched=${MATCHED}" >> $GITHUB_OUTPUT
+
       - name: Evaluate approval conditions
         id: evaluate
+        if: steps.check-files.outputs.matched == 'true'
         env:
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
           ALLOWED_UPDATE_TYPES: ${{ inputs.allowed_update_types }}
           REJECT_PACKAGES: ${{ inputs.reject_packages }}
           ACCEPT_PACKAGES: ${{ inputs.accept_packages }}
+          AUTO_MERGE_PACKAGES: ${{ inputs.auto_merge_packages }}
         run: |
           # Extract semver level from "version-update:semver-<level>"
           SEMVER_LEVEL=$(echo "${UPDATE_TYPE}" | sed 's/version-update:semver-//')
@@ -90,6 +138,7 @@ jobs:
           if [ "${TYPE_ALLOWED}" = "false" ]; then
             REASON="Skipped: '${SEMVER_LEVEL}' updates not in allowed list (${ALLOWED_UPDATE_TYPES})"
             echo "approved=false" >> $GITHUB_OUTPUT
+            echo "auto_merge_eligible=false" >> $GITHUB_OUTPUT
             echo "reason=${REASON}" >> $GITHUB_OUTPUT
             echo "Decision: ${REASON}"
             exit 0
@@ -139,6 +188,7 @@ jobs:
 
           if [ "${PACKAGE_APPROVED}" = "false" ]; then
             echo "approved=false" >> $GITHUB_OUTPUT
+            echo "auto_merge_eligible=false" >> $GITHUB_OUTPUT
             echo "reason=${REASON}" >> $GITHUB_OUTPUT
             echo "Decision: ${REASON}"
             exit 0
@@ -149,6 +199,23 @@ jobs:
           echo "reason=${REASON}" >> $GITHUB_OUTPUT
           echo "Decision: ${REASON}"
 
+          # --- Check auto-merge eligibility ---
+          # If AUTO_MERGE_PACKAGES regex is set, ALL packages must match for auto-merge
+          AUTO_MERGE_ELIGIBLE="true"
+          if [ -n "${AUTO_MERGE_PACKAGES}" ]; then
+            IFS=',' read -ra AM_PACKAGES <<< "${DEPENDENCY_NAMES}"
+            for pkg in "${AM_PACKAGES[@]}"; do
+              pkg=$(echo "$pkg" | xargs)
+              [ -z "$pkg" ] && continue
+              if ! echo "$pkg" | grep -qE "${AUTO_MERGE_PACKAGES}"; then
+                AUTO_MERGE_ELIGIBLE="false"
+                echo "Auto-merge skipped: '${pkg}' does not match regex '${AUTO_MERGE_PACKAGES}'"
+                break
+              fi
+            done
+          fi
+          echo "auto_merge_eligible=${AUTO_MERGE_ELIGIBLE}" >> $GITHUB_OUTPUT
+
       - name: Approve PR
         if: steps.evaluate.outputs.approved == 'true'
         run: gh pr review --approve "${{ github.event.pull_request.html_url }}"
@@ -156,7 +223,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge
-        if: steps.evaluate.outputs.approved == 'true' && inputs.auto_merge
+        if: >-
+          steps.evaluate.outputs.approved == 'true' &&
+          inputs.auto_merge &&
+          steps.evaluate.outputs.auto_merge_eligible == 'true'
         run: gh pr merge --auto --${{ inputs.merge_method }} "${{ github.event.pull_request.html_url }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -172,6 +242,9 @@ jobs:
           echo "- **Package(s):** \`${{ steps.metadata.outputs.dependency-names }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Update type:** \`${{ steps.metadata.outputs.update-type }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Allowed types:** \`${{ inputs.allowed_update_types }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.file_pattern }}" ]; then
+            echo "- **File pattern:** \`${{ inputs.file_pattern }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
           if [ -n "${{ inputs.reject_packages }}" ]; then
             echo "- **Reject list:** \`${{ inputs.reject_packages }}\`" >> $GITHUB_STEP_SUMMARY
           fi
@@ -179,11 +252,18 @@ jobs:
             echo "- **Accept list:** \`${{ inputs.accept_packages }}\`" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${APPROVED}" = "true" ]; then
+          if [ "${{ steps.check-files.outputs.matched }}" = "false" ]; then
+            echo "**Skipped** - No changed files matched pattern \`${{ inputs.file_pattern }}\`" >> $GITHUB_STEP_SUMMARY
+          elif [ "${APPROVED}" = "true" ]; then
             echo "**Approved** - ${REASON}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ inputs.auto_merge }}" = "true" ]; then
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "Auto-merge enabled (method: \`${{ inputs.merge_method }}\`)" >> $GITHUB_STEP_SUMMARY
+              if [ "${{ steps.evaluate.outputs.auto_merge_eligible }}" = "true" ]; then
+                echo "Auto-merge enabled (method: \`${{ inputs.merge_method }}\`)" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "Auto-merge skipped: package(s) did not match" \
+                  "regex \`${{ inputs.auto_merge_packages }}\`" >> $GITHUB_STEP_SUMMARY
+              fi
             fi
           else
             echo "**Skipped** - ${REASON}" >> $GITHUB_STEP_SUMMARY
