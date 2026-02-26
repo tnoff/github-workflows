@@ -51,7 +51,7 @@ on:
         type: string
         default: '["ubuntu-24.04"]'
     secrets:
-      github_token:
+      bot_token:
         description: >-
           PAT for a bot user declared in CODEOWNERS.
           When provided, this token is used instead of GITHUB_TOKEN for
@@ -83,13 +83,13 @@ jobs:
         id: metadata
         uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a
         with:
-          github-token: ${{ secrets.github_token || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
 
       - name: Check changed file paths
         id: check-files
         env:
           FILE_PATTERN: ${{ inputs.file_pattern }}
-          GH_TOKEN: ${{ secrets.github_token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "${FILE_PATTERN}" ]; then
             echo "matched=true" >> $GITHUB_OUTPUT
@@ -228,7 +228,7 @@ jobs:
         if: steps.evaluate.outputs.approved == 'true'
         run: gh pr review --approve "${{ github.event.pull_request.html_url }}"
         env:
-          GH_TOKEN: ${{ secrets.github_token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge
         if: >-
@@ -237,7 +237,7 @@ jobs:
           steps.evaluate.outputs.auto_merge_eligible == 'true'
         run: gh pr merge --auto --${{ inputs.merge_method }} "${{ github.event.pull_request.html_url }}"
         env:
-          GH_TOKEN: ${{ secrets.github_token || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
 
       - name: Summary
         if: always()
