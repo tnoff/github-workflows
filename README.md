@@ -207,7 +207,7 @@ jobs:
 
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `github_token` | ❌ | PAT for a bot user declared in CODEOWNERS. When provided, used instead of `GITHUB_TOKEN` for approving and merging the PR, allowing the bot user to satisfy branch-protection review requirements. |
+| `bot_token` | ❌ | PAT for a bot user declared in CODEOWNERS. When provided, used instead of `GITHUB_TOKEN` for approving and merging the PR, allowing the bot user to satisfy branch-protection review requirements. |
 
 **Outputs:**
 
@@ -222,7 +222,7 @@ The workflow requires `pull-requests: write` to approve and `contents: write` to
 
 > **Note:** Auto-merge (`auto_merge: true`) requires "Allow auto-merge" to be enabled in your repository settings under **Settings → General → Pull Requests**.
 >
-> **Note on CODEOWNERS:** The `github-actions[bot]` approval from this workflow does not count toward CODEOWNERS-required reviews. If your branch protection requires a CODEOWNERS review, add a bot user to CODEOWNERS and pass its PAT via the `github_token` secret (see example below).
+> **Note on CODEOWNERS:** The `github-actions[bot]` approval from this workflow does not count toward CODEOWNERS-required reviews. If your branch protection requires a CODEOWNERS review, add a bot user to CODEOWNERS and pass its PAT via the `bot_token` secret (see example below).
 
 **Examples:**
 
@@ -283,7 +283,7 @@ jobs:
     with:
       allowed_update_types: 'minor,patch'
     secrets:
-      github_token: ${{ secrets.BOT_PAT }}
+      bot_token: ${{ secrets.BOT_PAT }}
 ```
 
 ## Self-Hosted Runners
