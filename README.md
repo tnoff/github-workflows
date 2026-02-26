@@ -203,6 +203,12 @@ jobs:
 | `merge_method` | ❌ | `squash` | Merge method: `merge`, `squash`, or `rebase` |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 
+**Secrets:**
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `github_token` | ❌ | PAT for a bot user declared in CODEOWNERS. When provided, used instead of `GITHUB_TOKEN` for approving and merging the PR, allowing the bot user to satisfy branch-protection review requirements. |
+
 **Outputs:**
 
 | Output | Description |
@@ -216,7 +222,7 @@ The workflow requires `pull-requests: write` to approve and `contents: write` to
 
 > **Note:** Auto-merge (`auto_merge: true`) requires "Allow auto-merge" to be enabled in your repository settings under **Settings → General → Pull Requests**.
 >
-> **Note on CODEOWNERS:** The `github-actions[bot]` approval from this workflow does not count toward CODEOWNERS-required reviews. If your branch protection requires a CODEOWNERS review, you will need a PAT from a user listed in CODEOWNERS, or restructure protection to use required status checks instead.
+> **Note on CODEOWNERS:** The `github-actions[bot]` approval from this workflow does not count toward CODEOWNERS-required reviews. If your branch protection requires a CODEOWNERS review, add a bot user to CODEOWNERS and pass its PAT via the `github_token` secret (see example below).
 
 **Examples:**
 
@@ -265,6 +271,19 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
     with:
       allowed_update_types: 'patch'
+```
+
+Bot user for CODEOWNERS review requirement:
+```yaml
+# CODEOWNERS contains: * @my-org/bot-account
+# BOT_PAT is a PAT for bot-account stored as a repo/org secret
+jobs:
+  auto-approve:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'minor,patch'
+    secrets:
+      github_token: ${{ secrets.BOT_PAT }}
 ```
 
 ## Self-Hosted Runners
