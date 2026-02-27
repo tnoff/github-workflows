@@ -229,6 +229,7 @@ jobs:
         run: gh pr review --approve "${{ github.event.pull_request.html_url }}"
         env:
           GH_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
 
       - name: Enable auto-merge
         if: >-
@@ -238,6 +239,7 @@ jobs:
         run: gh pr merge --auto --${{ inputs.merge_method }} "${{ github.event.pull_request.html_url }}"
         env:
           GH_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.bot_token || secrets.GITHUB_TOKEN }}
 
       - name: Summary
         if: always()
