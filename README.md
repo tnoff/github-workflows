@@ -67,7 +67,7 @@ No special permissions required. The workflow uses `contents: read` internally t
 
 ### `tag.yml`
 
-Automatically creates Git tags based on the VERSION file. Checks if the tag already exists before creating it, preventing duplicate tag errors.
+Automatically creates Git tags based on a version file. Checks if the tag already exists before creating it, preventing duplicate tag errors. Supports plain text version files (e.g. `VERSION`) and JSON files (e.g. `package.json`).
 
 ```yaml
 jobs:
@@ -77,11 +77,25 @@ jobs:
       version_file: ./VERSION
 ```
 
+For a JSON file like `package.json`:
+
+```yaml
+jobs:
+  create-tag:
+    uses: tnoff/github-workflows/.github/workflows/tag.yml@v1
+    with:
+      version_file: ./package.json
+      version_file_type: json
+      version_json_key: version
+```
+
 **Inputs:**
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `version_file` | ❌ | `./VERSION` | Path to VERSION file |
+| `version_file` | ❌ | `./VERSION` | Path to version file |
+| `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
+| `version_json_key` | ❌ | `version` | Key to extract when `version_file_type` is `json` |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 | `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
 
