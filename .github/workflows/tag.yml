@@ -1,13 +1,23 @@
-name: Tag commit on VERSION file
+name: Tag commit on version file
 
 on:
   workflow_call:
     inputs:
       version_file:
-        description: 'Path to VERSION file'
+        description: 'Path to version file'
         required: false
         type: string
         default: './VERSION'
+      version_file_type:
+        description: 'File type: plain (raw text) or json'
+        required: false
+        type: string
+        default: 'plain'
+      version_json_key:
+        description: 'Key to extract when version_file_type is json (e.g. "version" for package.json)'
+        required: false
+        type: string
+        default: 'version'
       runner_labels:
         description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
         required: false
@@ -20,7 +30,7 @@ on:
         default: true
     outputs:
       version:
-        description: 'Version read from VERSION file (with v prefix)'
+        description: 'Version read from version file (with v prefix)'
         value: ${{ jobs.tag_build.outputs.version }}
       tag_created:
         description: 'Whether a new tag was created (true/false)'
@@ -48,7 +58,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Get version
         id: version
-        run: echo "version=v$(cat ${{ inputs.version_file }})" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ inputs.version_file_type }}" = "json" ]; then
+            echo "version=v$(jq -r '.${{ inputs.version_json_key }}' '${{ inputs.version_file }}')" >> $GITHUB_OUTPUT
+          else
+            echo "version=v$(cat '${{ inputs.version_file }}')" >> $GITHUB_OUTPUT
+          fi
       - name: Check If Tag already exists
         uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9
         id: check-tag
