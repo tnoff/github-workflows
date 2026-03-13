@@ -300,6 +300,50 @@ jobs:
       bot_token: ${{ secrets.BOT_PAT }}
 ```
 
+### `discord-notify.yml`
+
+Sends a failure notification to a Discord channel via webhook. Intended to be called as a dependent job with `if: failure()` after a build job fails.
+
+```yaml
+# In your app repository: .github/workflows/ci.yml
+jobs:
+  build:
+    uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
+    with:
+      image_name: my-app
+    secrets:
+      oci_registry: ${{ secrets.OCI_REGISTRY }}
+      oci_username: ${{ secrets.OCI_USERNAME }}
+      oci_token: ${{ secrets.OCI_TOKEN }}
+      oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+
+  notify-failure:
+    needs: build
+    if: failure()
+    uses: tnoff/github-workflows/.github/workflows/discord-notify.yml@v1
+    secrets:
+      discord_webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+```
+
+The notification includes repository, branch, workflow name, actor, commit SHA, and a direct link to the failed run. An optional `message` input can add extra context.
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `message` | ❌ | `''` | Additional context to include in the notification |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+
+**Secrets:**
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `discord_webhook_url` | ✅ | Discord webhook URL |
+
+**Permissions:**
+
+No special permissions required.
+
 ## Self-Hosted Runners
 
 All workflows support self-hosted runners via the `runner_labels` input. When using self-hosted runners on public repositories, set `allow_fork_prs: false` to prevent fork PRs from executing workflows on your infrastructure.
