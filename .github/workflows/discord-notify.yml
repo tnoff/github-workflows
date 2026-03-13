@@ -1,0 +1,74 @@
+name: Discord Failure Notification
+
+on:
+  workflow_call:
+    inputs:
+      message:
+        description: 'Additional context or failure message to include in the notification'
+        required: false
+        type: string
+        default: ''
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    secrets:
+      discord_webhook_url:
+        description: 'Discord webhook URL for failure notifications'
+        required: true
+
+jobs:
+  notify:
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    steps:
+      - name: Send Discord failure notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.discord_webhook_url }}
+          EXTRA_MESSAGE: ${{ inputs.message }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.request, urllib.error
+
+          webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+          extra_message = os.environ.get("EXTRA_MESSAGE", "")
+
+          fields = [
+              {"name": "Repository", "value": os.environ["REPO"], "inline": True},
+              {"name": "Branch", "value": os.environ["BRANCH"], "inline": True},
+              {"name": "Workflow", "value": os.environ["WORKFLOW_NAME"], "inline": True},
+              {"name": "Actor", "value": os.environ["ACTOR"], "inline": True},
+              {"name": "Commit", "value": f"`{os.environ['COMMIT_SHA'][:7]}`", "inline": False},
+              {"name": "Run URL", "value": os.environ["WORKFLOW_URL"], "inline": False},
+          ]
+
+          if extra_message:
+              fields.append({"name": "Message", "value": extra_message, "inline": False})
+
+          payload = json.dumps({
+              "embeds": [{
+                  "title": "Workflow Failed",
+                  "color": 15158332,
+                  "fields": fields,
+              }]
+          })
+
+          req = urllib.request.Request(
+              webhook_url,
+              data=payload.encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          try:
+              urllib.request.urlopen(req)
+              print("Discord notification sent")
+          except urllib.error.HTTPError as e:
+              print(f"Failed to send Discord notification: {e.code} {e.reason}", file=sys.stderr)
+              sys.exit(1)
+          PYEOF
