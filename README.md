@@ -215,6 +215,8 @@ jobs:
 | `auto_merge` | ❌ | `true` | Enable auto-merge once required checks pass (requires "Allow auto-merge" in repo settings) |
 | `auto_merge_packages` | ❌ | `''` | Regex pattern that ALL packages must match to enable auto-merge. If empty, all approved PRs are eligible for auto-merge. |
 | `merge_method` | ❌ | `squash` | Merge method: `merge`, `squash`, or `rebase` |
+| `add_labels` | ❌ | `''` | Comma-separated labels to add to the PR when approved |
+| `remove_labels` | ❌ | `''` | Comma-separated labels to remove from the PR when approved |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 
 **Secrets:**
@@ -285,6 +287,15 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
     with:
       allowed_update_types: 'patch'
+```
+
+Add/remove labels on approval:
+```yaml
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'minor,patch'
+      add_labels: 'auto-approved,dependencies'
+      remove_labels: 'needs-review'
 ```
 
 Bot user for CODEOWNERS review requirement:
