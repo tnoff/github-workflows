@@ -55,7 +55,7 @@ jobs:
       tag_exists: ${{ steps.check-tag.outputs.exists }}
     steps:
       - name: Check out the repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Get version
         id: version
         run: |
@@ -64,21 +64,19 @@ jobs:
           else
             echo "version=v$(cat '${{ inputs.version_file }}')" >> $GITHUB_OUTPUT
           fi
-      - name: Check If Tag already exists
-        uses: mukunku/tag-exists-action@bdad1eaa119ce71b150b952c97351c75025c06a9
+      - name: Check if tag already exists
         id: check-tag
-        with:
-          tag: ${{ steps.version.outputs.version }}
-      - run: echo "Tag exists!"
-        if: steps.check-tag.outputs.exists == 'true'
+        run: |
+          if git ls-remote --tags origin "${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
       - name: Add tag
-        id: tag-version
         if: steps.check-tag.outputs.exists != 'true'
-        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          custom_tag: ${{ steps.version.outputs.version }}
-          tag_prefix: ''
+        run: |
+          git tag "${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
 
       - name: Summary
         run: |
