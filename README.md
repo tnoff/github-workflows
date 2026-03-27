@@ -381,6 +381,7 @@ jobs:
 |-------|----------|---------|-------------|
 | `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
 | `python_version` | ❌ | `3.x` | Python version |
+| `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
 | `install_command` | ❌ | `pip install pytest pytest-cov` | Dependency install command |
 | `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
 | `working_directory` | ❌ | `.` | Directory to run commands in |
@@ -430,6 +431,7 @@ jobs:
 |-------|----------|---------|-------------|
 | `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
 | `python_version` | ❌ | `3.x` | Python version |
+| `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
 | `install_command` | ❌ | `pip install pytest pytest-cov diff-cover` | Dependency install command (include `diff-cover`) |
 | `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
 | `working_directory` | ❌ | `.` | Directory to run commands in |
