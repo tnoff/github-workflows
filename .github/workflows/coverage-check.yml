@@ -1,0 +1,214 @@
+name: Check pytest Coverage
+
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.x'
+      install_command:
+        description: 'Command to install dependencies (include diff-cover here)'
+        required: false
+        type: string
+        default: 'pip install pytest pytest-cov diff-cover'
+      coverage_source:
+        description: 'Argument to --cov= (e.g. src/mypackage)'
+        required: true
+        type: string
+      pytest_args:
+        description: 'Extra pytest arguments (no --cov/--cov-report flags)'
+        required: false
+        type: string
+        default: ''
+      working_directory:
+        description: 'Directory to run commands in'
+        required: false
+        type: string
+        default: '.'
+      artifact_name:
+        description: 'Name of the baseline artifact (must match coverage-store.yml)'
+        required: false
+        type: string
+        default: 'pytest-coverage-baseline'
+      fail_on_missing_baseline:
+        description: 'Fail if no baseline artifact is found on main'
+        required: false
+        type: boolean
+        default: false
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      coverage_percent:
+        description: 'Current total coverage percentage'
+        value: ${{ jobs.check-coverage.outputs.coverage_percent }}
+      baseline_percent:
+        description: 'Baseline coverage percentage from main branch'
+        value: ${{ jobs.check-coverage.outputs.baseline_percent }}
+      coverage_passed:
+        description: 'true if coverage did not drop below baseline'
+        value: ${{ jobs.check-coverage.outputs.coverage_passed }}
+
+jobs:
+  check-coverage:
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    outputs:
+      coverage_percent: ${{ steps.parse-current.outputs.coverage_percent }}
+      baseline_percent: ${{ steps.parse-baseline.outputs.baseline_percent }}
+      coverage_passed: ${{ steps.compare.outputs.coverage_passed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+
+      - name: Fetch origin/main for diff-cover
+        run: git fetch origin main --depth=1
+
+      - name: Run pytest with coverage
+        run: |
+          pytest --cov=${{ inputs.coverage_source }} \
+            --cov-report=json:coverage-current.json \
+            --cov-report=xml:coverage.xml \
+            ${{ inputs.pytest_args }}
+
+      - name: Parse current coverage percentage
+        id: parse-current
+        run: |
+          COVERAGE=$(python3 - <<'EOF'
+          import json
+          with open("coverage-current.json") as f:
+              data = json.load(f)
+          pct = data["totals"]["percent_covered"]
+          print(f"{pct:.2f}")
+          EOF
+          )
+          echo "coverage_percent=${COVERAGE}" >> $GITHUB_OUTPUT
+
+      - name: Find baseline artifact on main
+        id: find-artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          JQ_SELECT='select(.workflow_run.head_branch == "main" and .expired == false)'
+          JQ_FILTER="[.artifacts[] | ${JQ_SELECT}] | first | .id // empty"
+          ARTIFACT_ID=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=${{ inputs.artifact_name }}&per_page=10" \
+            --jq "${JQ_FILTER}")
+          echo "artifact_id=${ARTIFACT_ID}" >> $GITHUB_OUTPUT
+
+      - name: Download and parse baseline artifact
+        id: parse-baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARTIFACT_ID="${{ steps.find-artifact.outputs.artifact_id }}"
+          if [ -z "${ARTIFACT_ID}" ]; then
+            echo "No baseline artifact found on main branch."
+            if [ "${{ inputs.fail_on_missing_baseline }}" = "true" ]; then
+              echo "fail_on_missing_baseline is true — failing."
+              exit 1
+            fi
+            echo "baseline_percent=" >> $GITHUB_OUTPUT
+          else
+            gh api "repos/${{ github.repository }}/actions/artifacts/${ARTIFACT_ID}/zip" > baseline.zip
+            unzip -o baseline.zip coverage-baseline.json
+            BASELINE=$(python3 - <<'EOF'
+          import json
+          with open("coverage-baseline.json") as f:
+              data = json.load(f)
+          pct = data["totals"]["percent_covered"]
+          print(f"{pct:.2f}")
+          EOF
+            )
+            echo "baseline_percent=${BASELINE}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compare coverage against baseline
+        id: compare
+        run: |
+          CURRENT="${{ steps.parse-current.outputs.coverage_percent }}"
+          BASELINE="${{ steps.parse-baseline.outputs.baseline_percent }}"
+          if [ -z "${BASELINE}" ]; then
+            echo "No baseline to compare against — skipping coverage gate."
+            echo "coverage_passed=true" >> $GITHUB_OUTPUT
+          else
+            PASSED=$(python3 - <<EOF
+          current = float("${CURRENT}")
+          baseline = float("${BASELINE}")
+          print("true" if current >= baseline else "false")
+          EOF
+            )
+            echo "coverage_passed=${PASSED}" >> $GITHUB_OUTPUT
+            if [ "${PASSED}" = "false" ]; then
+              echo "Coverage dropped: ${CURRENT}% < ${BASELINE}% (baseline)"
+              exit 1
+            fi
+          fi
+
+      - name: Run diff-cover (informational)
+        id: diff-cover
+        continue-on-error: true
+        run: |
+          diff-cover coverage.xml \
+            --compare-branch=origin/main \
+            --markdown-report=diff-cover.md
+          cat diff-cover.md >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Step summary
+        if: always()
+        run: |
+          CURRENT="${{ steps.parse-current.outputs.coverage_percent }}"
+          BASELINE="${{ steps.parse-baseline.outputs.baseline_percent }}"
+          PASSED="${{ steps.compare.outputs.coverage_passed }}"
+          echo "## pytest Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Overall Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Current coverage | \`${CURRENT}%\` |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${BASELINE}" ]; then
+            echo "| Baseline (main) | \`${BASELINE}%\` |" >> $GITHUB_STEP_SUMMARY
+            if [ "${PASSED}" = "true" ]; then
+              echo "| Status | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Status | ❌ Failed — coverage dropped below baseline |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Baseline (main) | No baseline found |" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | ⚠️ Skipped (no baseline) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "diff-cover.md" ]; then
+            echo "### Diff Coverage" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            cat diff-cover.md >> $GITHUB_STEP_SUMMARY
+          fi
