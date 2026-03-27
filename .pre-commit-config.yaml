@@ -28,3 +28,13 @@ repos:
     hooks:
       - id: actionlint
         files: \.github/workflows/.*\.ya?ml$
+
+  # Enforce that all uses: refs are pinned to a full 40-char commit SHA
+  - repo: local
+    hooks:
+      - id: check-action-sha-pin
+        name: Check action SHA pins
+        language: pygrep
+        entry: '^\s+(-\s+)?uses:\s+\S+@(?![a-f0-9]{40}([^a-f0-9]|$))'
+        files: '\.github/workflows/.*\.ya?ml$'
+        types: [yaml]

@@ -1,0 +1,75 @@
+name: Check Action Pins
+
+on:
+  workflow_call:
+    inputs:
+      workflow_dir:
+        description: 'Directory containing workflow files to scan'
+        required: false
+        type: string
+        default: '.github/workflows'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      violations_found:
+        description: 'Whether any unpinned actions were detected (true/false)'
+        value: ${{ jobs.check.outputs.violations_found }}
+
+jobs:
+  check:
+    name: Check action SHA pins
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    outputs:
+      violations_found: ${{ steps.scan.outputs.violations_found }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Scan for unpinned actions
+        id: scan
+        run: |
+          WORKFLOW_DIR="${{ inputs.workflow_dir }}"
+          echo "Scanning ${WORKFLOW_DIR} for unpinned action refs..."
+
+          # Match only YAML uses: keys (leading whitespace, optional list dash).
+          # This skips comment lines and shell code inside run: blocks.
+          # Local refs (no @) are also skipped by the pattern.
+          VIOLATIONS=$(grep -rPn '^\s+(-\s+)?uses:\s+\S+@' "${WORKFLOW_DIR}"/*.yml 2>/dev/null \
+            | grep -vP '@[a-f0-9]{40}([^a-f0-9]|$)' || true)
+
+          if [ -n "${VIOLATIONS}" ]; then
+            echo "violations_found=true" >> $GITHUB_OUTPUT
+            echo "## Action Pin Check Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The following actions are not pinned to a full 40-character commit SHA:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "${VIOLATIONS}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Pin each action to a full SHA, e.g.:" >> $GITHUB_STEP_SUMMARY
+            echo "\`uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\`" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Unpinned action refs found. All actions must be pinned to a full 40-character commit SHA."
+            echo "${VIOLATIONS}"
+            exit 1
+          else
+            echo "violations_found=false" >> $GITHUB_OUTPUT
+            echo "## Action Pin Check Passed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All actions are pinned to full commit SHAs." >> $GITHUB_STEP_SUMMARY
+            echo "All actions are pinned to full commit SHAs."
+          fi

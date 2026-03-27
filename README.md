@@ -461,6 +461,37 @@ jobs:
 
 ---
 
+### `check-action-pins.yml`
+
+Scans all workflow files in `.github/workflows/` and fails if any `uses:` ref is not pinned to a full 40-character commit SHA. Local refs (e.g. `uses: ./.github/workflows/foo.yml`) are ignored.
+
+```yaml
+# In your app repository: .github/workflows/pr.yml
+jobs:
+  check-pins:
+    uses: tnoff/github-workflows/.github/workflows/check-action-pins.yml@v1
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `workflow_dir` | ❌ | `.github/workflows` | Directory to scan |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `violations_found` | `true` if any unpinned actions were detected |
+
+**Permissions:**
+
+No special permissions required. The workflow uses `contents: read` internally.
+
+---
+
 ## Self-Hosted Runners
 
 All workflows support self-hosted runners via the `runner_labels` input. When using self-hosted runners on public repositories, set `allow_fork_prs: false` to prevent fork PRs from executing workflows on your infrastructure.
