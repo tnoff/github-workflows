@@ -4,6 +4,18 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 
 > **For Contributors:** See [DEVELOPMENT.md](./DEVELOPMENT.md) for local workflow validation and development setup.
 
+## Table of Contents
+
+- [ocir-push.yml](#ocir-pushyml) — Build and push Docker images to OCIR
+- [tag.yml](#tagyml) — Auto-create Git tags from a version file
+- [check-pr-labels.yml](#check-pr-labelsyml) — Validate PR labels and merge conditions
+- [dependabot-auto-approve.yml](#dependabot-auto-approveyml) — Auto-approve Dependabot PRs
+- [discord-notify.yml](#discord-notifyyml) — Send failure notifications to Discord
+- [coverage-store.yml](#coverage-storeyml) — Store pytest coverage baseline artifact
+- [coverage-check.yml](#coverage-checkyml) — Compare PR coverage against baseline
+- [check-action-pins.yml](#check-action-pinsyml) — Enforce SHA-pinned action refs
+- [Self-Hosted Runners](#self-hosted-runners)
+
 ## Available Workflows
 
 ### `ocir-push.yml`
