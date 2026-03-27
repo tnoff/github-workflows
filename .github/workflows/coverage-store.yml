@@ -1,0 +1,119 @@
+name: Store pytest Coverage Baseline
+
+on:
+  workflow_call:
+    inputs:
+      python_version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.x'
+      install_command:
+        description: 'Command to install dependencies'
+        required: false
+        type: string
+        default: 'pip install pytest pytest-cov'
+      coverage_source:
+        description: 'Argument to --cov= (e.g. src/mypackage)'
+        required: true
+        type: string
+      pytest_args:
+        description: 'Extra pytest arguments (no --cov/--cov-report flags)'
+        required: false
+        type: string
+        default: ''
+      working_directory:
+        description: 'Directory to run commands in'
+        required: false
+        type: string
+        default: '.'
+      artifact_name:
+        description: 'Name of the uploaded artifact (must match coverage-check.yml)'
+        required: false
+        type: string
+        default: 'pytest-coverage-baseline'
+      artifact_retention_days:
+        description: 'Days to retain the artifact'
+        required: false
+        type: number
+        default: 400
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      coverage_percent:
+        description: 'Total coverage percentage (e.g. 87.42)'
+        value: ${{ jobs.store-coverage.outputs.coverage_percent }}
+
+jobs:
+  store-coverage:
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    outputs:
+      coverage_percent: ${{ steps.parse-coverage.outputs.coverage_percent }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install dependencies
+        run: ${{ inputs.install_command }}
+
+      - name: Run pytest with coverage
+        run: |
+          pytest --cov=${{ inputs.coverage_source }} \
+            --cov-report=json:coverage-baseline.json \
+            ${{ inputs.pytest_args }}
+
+      - name: Parse coverage percentage
+        id: parse-coverage
+        run: |
+          COVERAGE=$(python3 - <<'EOF'
+          import json
+          with open("coverage-baseline.json") as f:
+              data = json.load(f)
+          pct = data["totals"]["percent_covered"]
+          print(f"{pct:.2f}")
+          EOF
+          )
+          echo "coverage_percent=${COVERAGE}" >> $GITHUB_OUTPUT
+
+      - name: Upload coverage baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: >-
+            ${{ inputs.working_directory == '.' && 'coverage-baseline.json'
+            || format('{0}/coverage-baseline.json', inputs.working_directory) }}
+          retention-days: ${{ inputs.artifact_retention_days }}
+          overwrite: true
+
+      - name: Step summary
+        run: |
+          echo "## pytest Coverage Baseline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Coverage** | \`${{ steps.parse-coverage.outputs.coverage_percent }}%\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Artifact** | \`${{ inputs.artifact_name }}\` |" >> $GITHUB_STEP_SUMMARY

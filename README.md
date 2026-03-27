@@ -355,6 +355,112 @@ The notification includes repository, branch, workflow name, actor, commit SHA, 
 
 No special permissions required.
 
+### `coverage-store.yml`
+
+Runs pytest with coverage on `push` to `main` and uploads the result as a named artifact. Used as the baseline for `coverage-check.yml`.
+
+```yaml
+# In your app repository: .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  store-coverage:
+    uses: tnoff/github-workflows/.github/workflows/coverage-store.yml@v1
+    with:
+      coverage_source: src/mypackage
+      install_command: pip install -e ".[dev]"
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
+| `python_version` | ❌ | `3.x` | Python version |
+| `install_command` | ❌ | `pip install pytest pytest-cov` | Dependency install command |
+| `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
+| `working_directory` | ❌ | `.` | Directory to run commands in |
+| `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-check.yml`) |
+| `artifact_retention_days` | ❌ | `400` | Days to retain the artifact |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `coverage_percent` | Total coverage percentage (e.g. `87.42`) |
+
+**Permissions:**
+
+No special permissions required. The workflow uses `contents: read` internally.
+
+---
+
+### `coverage-check.yml`
+
+Runs pytest on a PR, downloads the baseline artifact from `main`, and compares overall coverage. Fails the check if coverage drops below the baseline. Also runs `diff-cover` to report which lines in the PR's changed code are uncovered (informational only — never blocks merging).
+
+```yaml
+# In your app repository: .github/workflows/pr.yml
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    uses: tnoff/github-workflows/.github/workflows/coverage-check.yml@v1
+    permissions:
+      contents: read
+      actions: read
+    with:
+      coverage_source: src/mypackage
+      install_command: pip install -e ".[dev]" diff-cover
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
+| `python_version` | ❌ | `3.x` | Python version |
+| `install_command` | ❌ | `pip install pytest pytest-cov diff-cover` | Dependency install command (include `diff-cover`) |
+| `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
+| `working_directory` | ❌ | `.` | Directory to run commands in |
+| `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-store.yml`) |
+| `fail_on_missing_baseline` | ❌ | `false` | Fail if no baseline artifact is found on main yet |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `coverage_percent` | Current total coverage percentage |
+| `baseline_percent` | Baseline coverage percentage from main branch |
+| `coverage_passed` | `true` if coverage did not drop below baseline |
+
+**Permissions:**
+
+The calling workflow must grant `actions: read` (to download artifacts across runs) and `contents: read`:
+
+```yaml
+jobs:
+  coverage:
+    permissions:
+      contents: read
+      actions: read
+    uses: tnoff/github-workflows/.github/workflows/coverage-check.yml@v1
+```
+
+---
+
 ## Self-Hosted Runners
 
 All workflows support self-hosted runners via the `runner_labels` input. When using self-hosted runners on public repositories, set `allow_fork_prs: false` to prevent fork PRs from executing workflows on your infrastructure.
