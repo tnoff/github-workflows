@@ -1,0 +1,9 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-action-pins:
+    uses: ./.github/workflows/check-action-pins.yml
