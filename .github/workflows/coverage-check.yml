@@ -14,10 +14,10 @@ on:
         type: string
         default: ''
       install_command:
-        description: 'Command to install dependencies (include diff-cover here)'
+        description: 'Command to install dependencies'
         required: false
         type: string
-        default: 'pip install pytest pytest-cov diff-cover'
+        default: 'pip install pytest pytest-cov'
       coverage_source:
         description: 'Space-separated list of --cov= arguments (e.g. "src/pkg1 src/pkg2")'
         required: true
@@ -97,6 +97,9 @@ jobs:
 
       - name: Install dependencies
         run: ${{ inputs.install_command }}
+
+      - name: Install diff-cover
+        run: pip install diff-cover
 
       - name: Fetch origin/main for diff-cover
         run: git fetch origin main --depth=1
