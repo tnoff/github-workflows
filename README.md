@@ -391,7 +391,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
+| `coverage_source` | ✅ | - | Space-separated `--cov=` arguments (e.g. `src/mypackage` or `"src/pkg1 src/pkg2"`) |
 | `python_version` | ❌ | `3.x` | Python version |
 | `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
 | `install_command` | ❌ | `pip install pytest pytest-cov` | Dependency install command |
@@ -441,7 +441,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `coverage_source` | ✅ | - | Argument to `--cov=` (e.g. `src/mypackage`) |
+| `coverage_source` | ✅ | - | Space-separated `--cov=` arguments (e.g. `src/mypackage` or `"src/pkg1 src/pkg2"`) |
 | `python_version` | ❌ | `3.x` | Python version |
 | `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
 | `install_command` | ❌ | `pip install pytest pytest-cov diff-cover` | Dependency install command (include `diff-cover`) |
