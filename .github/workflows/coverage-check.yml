@@ -19,7 +19,7 @@ on:
         type: string
         default: 'pip install pytest pytest-cov diff-cover'
       coverage_source:
-        description: 'Argument to --cov= (e.g. src/mypackage)'
+        description: 'Space-separated list of --cov= arguments (e.g. "src/pkg1 src/pkg2")'
         required: true
         type: string
       pytest_args:
@@ -103,7 +103,11 @@ jobs:
 
       - name: Run pytest with coverage
         run: |
-          pytest --cov=${{ inputs.coverage_source }} \
+          COV_FLAGS=""
+          for src in ${{ inputs.coverage_source }}; do
+            COV_FLAGS="${COV_FLAGS} --cov=${src}"
+          done
+          pytest ${COV_FLAGS} \
             --cov-report=json:coverage-current.json \
             --cov-report=xml:coverage.xml \
             ${{ inputs.pytest_args }}
