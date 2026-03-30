@@ -416,7 +416,7 @@ No special permissions required. The workflow uses `contents: read` internally.
 
 ### `coverage-check.yml`
 
-Runs pytest on a PR, downloads the baseline artifact from `main`, and compares overall coverage. Fails the check if coverage drops below the baseline. Also runs `diff-cover` to report which lines in the PR's changed code are uncovered (informational only — never blocks merging).
+Runs pytest on a PR, downloads the baseline artifact from `main`, and compares overall coverage. Fails the check if coverage drops below the baseline or if any tests fail. Always runs `diff-cover` before reporting failure, so the step summary includes per-line diff coverage regardless of outcome.
 
 ```yaml
 # In your app repository: .github/workflows/pr.yml
