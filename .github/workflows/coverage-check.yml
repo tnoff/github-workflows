@@ -105,6 +105,8 @@ jobs:
         run: git fetch origin main --depth=1
 
       - name: Run pytest with coverage
+        id: run-pytest
+        continue-on-error: true
         run: |
           COV_FLAGS=""
           for src in ${{ inputs.coverage_source }}; do
@@ -114,6 +116,16 @@ jobs:
             --cov-report=json:coverage-current.json \
             --cov-report=xml:coverage.xml \
             ${{ inputs.pytest_args }}
+
+      - name: Run diff-cover (informational)
+        id: diff-cover
+        if: always()
+        continue-on-error: true
+        run: |
+          diff-cover coverage.xml \
+            --compare-branch=origin/main \
+            --markdown-report=diff-cover.md
+          cat diff-cover.md >> $GITHUB_STEP_SUMMARY || true
 
       - name: Parse current coverage percentage
         id: parse-current
@@ -189,14 +201,11 @@ jobs:
             fi
           fi
 
-      - name: Run diff-cover (informational)
-        id: diff-cover
-        continue-on-error: true
+      - name: Fail if pytest failed
+        if: always() && steps.run-pytest.outcome == 'failure'
         run: |
-          diff-cover coverage.xml \
-            --compare-branch=origin/main \
-            --markdown-report=diff-cover.md
-          cat diff-cover.md >> $GITHUB_STEP_SUMMARY || true
+          echo "pytest failed — failing the job."
+          exit 1
 
       - name: Step summary
         if: always()
