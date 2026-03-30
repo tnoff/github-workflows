@@ -198,6 +198,8 @@ jobs:
 
 Automatically approves and optionally enables auto-merge for Dependabot PRs based on update type (major/minor/patch), package allow/reject lists, and changed file paths. Only runs when the PR author is `dependabot[bot]`.
 
+Git hash updates (where the previous or new version is a 40-character SHA) are always rejected, even if they would otherwise qualify as a patch update. This prevents dependabot from auto-approving action pin changes that carry no meaningful semver signal.
+
 Each call to this workflow is an independent rule. Compose multiple jobs in your calling workflow to express "approve this set of packages under these conditions OR approve that set under those conditions" — since approval and auto-merge are both idempotent, multiple jobs approving the same PR is harmless.
 
 ```yaml

@@ -142,6 +142,22 @@ jobs:
           echo "Packages: ${DEPENDENCY_NAMES}"
           echo "Allowed types: ${ALLOWED_UPDATE_TYPES}"
 
+          # --- Reject git hash updates ---
+          # fetch-metadata classifies SHA-to-SHA bumps as semver-patch; detect and reject them
+          PREV_VERSION="${{ steps.metadata.outputs.previous-version }}"
+          NEW_VERSION="${{ steps.metadata.outputs.new-version }}"
+          IS_HASH_UPDATE="false"
+          echo "${PREV_VERSION}" | grep -qE '^[0-9a-f]{40}$' && IS_HASH_UPDATE="true"
+          echo "${NEW_VERSION}" | grep -qE '^[0-9a-f]{40}$' && IS_HASH_UPDATE="true"
+          if [ "${IS_HASH_UPDATE}" = "true" ]; then
+            REASON="Skipped: git hash update (${PREV_VERSION} -> ${NEW_VERSION}) is not a semver bump"
+            echo "approved=false" >> $GITHUB_OUTPUT
+            echo "auto_merge_eligible=false" >> $GITHUB_OUTPUT
+            echo "reason=${REASON}" >> $GITHUB_OUTPUT
+            echo "Decision: ${REASON}"
+            exit 0
+          fi
+
           # --- Check update type ---
           TYPE_ALLOWED="false"
           IFS=',' read -ra ALLOWED_ARRAY <<< "${ALLOWED_UPDATE_TYPES}"
@@ -276,6 +292,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Package(s):** \`${{ steps.metadata.outputs.dependency-names }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Update type:** \`${{ steps.metadata.outputs.update-type }}\`" >> $GITHUB_STEP_SUMMARY
+          PREV="\`${{ steps.metadata.outputs.previous-version }}\`"
+          NEXT="\`${{ steps.metadata.outputs.new-version }}\`"
+          echo "- **Version:** ${PREV} → ${NEXT}" >> $GITHUB_STEP_SUMMARY
           echo "- **Allowed types:** \`${{ inputs.allowed_update_types }}\`" >> $GITHUB_STEP_SUMMARY
           if [ -n "${{ inputs.file_pattern }}" ]; then
             echo "- **File pattern:** \`${{ inputs.file_pattern }}\`" >> $GITHUB_STEP_SUMMARY
