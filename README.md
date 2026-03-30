@@ -449,6 +449,7 @@ jobs:
 | `working_directory` | ❌ | `.` | Directory to run commands in |
 | `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-store.yml`) |
 | `fail_on_missing_baseline` | ❌ | `false` | Fail if no baseline artifact is found on main yet |
+| `fail_on_diff_cover` | ❌ | `false` | Fail if diff-cover reports less than 100% coverage on changed lines |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 | `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
 
