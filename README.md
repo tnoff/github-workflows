@@ -55,6 +55,7 @@ jobs:
 | `tag_version` | ❌ | `false` | Tag image with version from VERSION file and `latest` (default: only commit SHA) |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 | `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+| `build_args` | ❌ | `''` | Docker build arguments (newline-separated `KEY=VALUE` pairs) |
 
 **Secrets:**
 
