@@ -169,6 +169,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
+| `paths` | ❌ | `[]` | JSON array of glob patterns; at least one changed file must match to trigger a bump (e.g., `["src/**", "package.json"]`). Empty array means always run. |
 | `bump_type` | ❌ | `patch` | Semver level to increment: `major`, `minor`, or `patch` |
 | `version_file` | ❌ | `./VERSION` | Path to version file |
 | `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
@@ -183,6 +184,8 @@ jobs:
 | `old_version` | Version read from the file before the bump |
 | `new_version` | Version after the bump (same as `old_version` if skipped) |
 | `version_bumped` | `true` if a bump commit was pushed, `false` if skipped |
+
+> **Note:** When the `paths` filter is set and no changed files match, the `bump` job is skipped entirely and all outputs will be empty strings. Callers that consume these outputs should guard against empty values.
 
 **Permissions:**
 
