@@ -28,6 +28,14 @@ on:
         required: false
         type: string
         default: ''
+      dependency_groups:
+        description: >-
+          Comma-separated dependabot group names to auto-approve (e.g. "prod-deps,runtime").
+          Matched against the dependency-group reported by dependabot/fetch-metadata.
+          If empty, no group filter is applied.
+        required: false
+        type: string
+        default: ''
       auto_merge:
         description: 'Enable auto-merge once required checks pass (requires auto-merge enabled in repo settings)'
         required: false
@@ -125,9 +133,35 @@ jobs:
           [ "${MATCHED}" = "false" ] && echo "No files matched pattern '${FILE_PATTERN}'"
           echo "matched=${MATCHED}" >> $GITHUB_OUTPUT
 
+      - name: Check dependency group
+        id: check-group
+        env:
+          DEPENDENCY_GROUPS: ${{ inputs.dependency_groups }}
+          ACTUAL_GROUP: ${{ steps.metadata.outputs.dependency-group }}
+        run: |
+          if [ -z "${DEPENDENCY_GROUPS}" ]; then
+            echo "matched=true" >> $GITHUB_OUTPUT
+            echo "No dependency group filter set, skipping group check"
+            exit 0
+          fi
+
+          MATCHED="false"
+          IFS=',' read -ra GROUP_ARRAY <<< "${DEPENDENCY_GROUPS}"
+          for group in "${GROUP_ARRAY[@]}"; do
+            group=$(echo "$group" | xargs)
+            if [ "${ACTUAL_GROUP}" = "${group}" ]; then
+              echo "Matched: group '${ACTUAL_GROUP}' is in allowed list"
+              MATCHED="true"
+              break
+            fi
+          done
+
+          [ "${MATCHED}" = "false" ] && echo "Group '${ACTUAL_GROUP}' not in allowed list '${DEPENDENCY_GROUPS}'"
+          echo "matched=${MATCHED}" >> $GITHUB_OUTPUT
+
       - name: Evaluate approval conditions
         id: evaluate
-        if: steps.check-files.outputs.matched == 'true'
+        if: steps.check-files.outputs.matched == 'true' && steps.check-group.outputs.matched == 'true'
         env:
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
@@ -299,6 +333,12 @@ jobs:
           if [ -n "${{ inputs.file_pattern }}" ]; then
             echo "- **File pattern:** \`${{ inputs.file_pattern }}\`" >> $GITHUB_STEP_SUMMARY
           fi
+          if [ -n "${{ inputs.dependency_groups }}" ]; then
+            echo "- **Dependency groups filter:** \`${{ inputs.dependency_groups }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -n "${{ steps.metadata.outputs.dependency-group }}" ]; then
+            echo "- **Dependency group:** \`${{ steps.metadata.outputs.dependency-group }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
           if [ -n "${{ inputs.reject_packages }}" ]; then
             echo "- **Reject list:** \`${{ inputs.reject_packages }}\`" >> $GITHUB_STEP_SUMMARY
           fi
@@ -314,6 +354,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.check-files.outputs.matched }}" = "false" ]; then
             echo "**Skipped** - No changed files matched pattern \`${{ inputs.file_pattern }}\`" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.check-group.outputs.matched }}" = "false" ]; then
+            echo "**Skipped** - Dependency group \`${{ steps.metadata.outputs.dependency-group }}\`" \
+              "not in allowed list \`${{ inputs.dependency_groups }}\`" >> $GITHUB_STEP_SUMMARY
           elif [ "${APPROVED}" = "true" ]; then
             echo "**Approved** - ${REASON}" >> $GITHUB_STEP_SUMMARY
             if [ "${{ inputs.auto_merge }}" = "true" ]; then

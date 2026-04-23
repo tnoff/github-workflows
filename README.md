@@ -296,6 +296,7 @@ jobs:
 | `reject_packages` | ❌ | `''` | Comma-separated packages to never auto-approve (takes priority over accept list) |
 | `accept_packages` | ❌ | `''` | Comma-separated packages to exclusively auto-approve. If empty, all packages not in the reject list are eligible. |
 | `file_pattern` | ❌ | `''` | Glob pattern matched against changed file paths (e.g. `tests/**`). If set, at least one changed file must match for the PR to be eligible. If empty, no file filter is applied. |
+| `dependency_groups` | ❌ | `''` | Comma-separated dependabot group names to auto-approve (e.g. `prod-deps,runtime`). Matched against the group name reported by `dependabot/fetch-metadata`. Useful when a single file (e.g. `pyproject.toml`) contains multiple dependency sections that you want to gate independently. If empty, no group filter is applied. |
 | `auto_merge` | ❌ | `true` | Enable auto-merge once required checks pass (requires "Allow auto-merge" in repo settings) |
 | `auto_merge_packages` | ❌ | `''` | Regex pattern that ALL packages must match to enable auto-merge. If empty, all approved PRs are eligible for auto-merge. |
 | `merge_method` | ❌ | `squash` | Merge method: `merge`, `squash`, or `rebase` |
@@ -371,6 +372,37 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
     with:
       allowed_update_types: 'patch'
+```
+
+Filter by dependabot group — useful for `pyproject.toml` where prod and dev deps live in the same file:
+```yaml
+# .github/dependabot.yml
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      prod-deps:
+        dependency-type: production
+      dev-deps:
+        dependency-type: development
+```
+```yaml
+jobs:
+  # Production deps: minor/patch only
+  auto-approve-prod:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      dependency_groups: 'prod-deps'
+      allowed_update_types: 'minor,patch'
+
+  # Dev deps: all levels (lower risk)
+  auto-approve-dev:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      dependency_groups: 'dev-deps'
+      allowed_update_types: 'major,minor,patch'
 ```
 
 Add/remove labels on approval:
