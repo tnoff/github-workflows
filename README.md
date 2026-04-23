@@ -8,6 +8,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 
 - [ocir-push.yml](#ocir-pushyml) — Build and push Docker images to OCIR
 - [tag.yml](#tagyml) — Auto-create Git tags from a version file
+- [bump-version.yml](#bump-versionyml) — Bump the version file on a PR branch
 - [check-pr-labels.yml](#check-pr-labelsyml) — Validate PR labels and merge conditions
 - [dependabot-auto-approve.yml](#dependabot-auto-approveyml) — Auto-approve Dependabot PRs
 - [discord-notify.yml](#discord-notifyyml) — Send failure notifications to Discord
@@ -131,6 +132,71 @@ jobs:
       contents: write
     uses: tnoff/github-workflows/.github/workflows/tag.yml@v1
 ```
+
+### `bump-version.yml`
+
+Bumps the version file on a PR branch by committing the new version directly onto the PR. Designed to be paired with `dependabot-auto-approve.yml` so that dependency updates automatically trigger a version increment before the PR is merged. Once the PR lands on `main`, the existing `auto-tag.yml` + `tag.yml` chain creates the release tag.
+
+The workflow is idempotent: if the version file already differs from the base branch anywhere in the PR, it skips — this is both the loop guard and a "already done" check.
+
+> **Note:** This workflow cannot run on fork PRs because it needs to push a commit back to the PR branch. `allow_fork_prs` defaults to `false`.
+
+```yaml
+# In your app repository: .github/workflows/dependabot.yml
+name: Dependabot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  auto-approve:
+    uses: tnoff/github-workflows/.github/workflows/dependabot-auto-approve.yml@v1
+    with:
+      allowed_update_types: 'minor,patch'
+
+  bump-version:
+    needs: auto-approve
+    if: needs.auto-approve.outputs.approved == 'true'
+    uses: tnoff/github-workflows/.github/workflows/bump-version.yml@v1
+    with:
+      bump_type: minor
+    permissions:
+      contents: write
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `bump_type` | ❌ | `patch` | Semver level to increment: `major`, `minor`, or `patch` |
+| `version_file` | ❌ | `./VERSION` | Path to version file |
+| `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
+| `version_json_key` | ❌ | `version` | Key to update when `version_file_type` is `json` |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `allow_fork_prs` | ❌ | `false` | Allow fork PRs to run — must be `false` since the workflow pushes to the PR branch |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `old_version` | Version read from the file before the bump |
+| `new_version` | Version after the bump (same as `old_version` if skipped) |
+| `version_bumped` | `true` if a bump commit was pushed, `false` if skipped |
+
+**Permissions:**
+
+The calling workflow must grant `contents: write` so the workflow can push the bump commit onto the PR branch:
+
+```yaml
+jobs:
+  bump-version:
+    permissions:
+      contents: write
+    uses: tnoff/github-workflows/.github/workflows/bump-version.yml@v1
+```
+
+---
 
 ### `check-pr-labels.yml`
 
