@@ -520,7 +520,7 @@ No special permissions required. The workflow uses `contents: read` internally.
 
 ### `coverage-check.yml`
 
-Runs pytest on a PR, downloads the baseline artifact from `main`, and compares overall coverage. Fails the check if coverage drops below the baseline or if any tests fail. Always runs `diff-cover` before reporting failure, so the step summary includes per-line diff coverage regardless of outcome.
+Runs pytest on a PR, downloads the baseline artifact from `main`, and compares overall coverage. The primary failure gate is diff-cover: if any changed or new lines are not covered, the job fails. If overall coverage drops (e.g. because code was removed) but all changed lines are covered, the job posts a warning comment on the PR instead of failing.
 
 ```yaml
 # In your app repository: .github/workflows/pr.yml
@@ -553,7 +553,7 @@ jobs:
 | `working_directory` | ❌ | `.` | Directory to run commands in |
 | `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-store.yml`) |
 | `fail_on_missing_baseline` | ❌ | `false` | Fail if no baseline artifact is found on main yet |
-| `fail_on_diff_cover` | ❌ | `false` | Fail if diff-cover reports less than 100% coverage on changed lines |
+| `fail_on_diff_cover` | ❌ | `true` | Fail if diff-cover reports less than 100% coverage on changed lines |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 | `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
 
@@ -567,7 +567,7 @@ jobs:
 
 **Permissions:**
 
-The calling workflow must grant `actions: read` (to download artifacts across runs) and `contents: read`:
+The calling workflow must grant `actions: read` (to download artifacts across runs), `contents: read`, and `pull-requests: write` (to post the coverage warning comment):
 
 ```yaml
 jobs:
@@ -575,6 +575,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: write
     uses: tnoff/github-workflows/.github/workflows/coverage-check.yml@v1
 ```
 
