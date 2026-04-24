@@ -46,7 +46,7 @@ on:
         description: 'Fail if diff-cover reports less than 100% coverage on changed lines'
         required: false
         type: boolean
-        default: false
+        default: true
       runner_labels:
         description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
         required: false
@@ -78,6 +78,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: write
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
@@ -201,10 +202,32 @@ jobs:
             )
             echo "coverage_passed=${PASSED}" >> $GITHUB_OUTPUT
             if [ "${PASSED}" = "false" ]; then
-              echo "Coverage dropped: ${CURRENT}% < ${BASELINE}% (baseline)"
-              exit 1
+              echo "Coverage dropped: ${CURRENT}% < ${BASELINE}% (baseline) — posting PR warning."
             fi
           fi
+
+      - name: Comment coverage warning on PR
+        if: always() && steps.compare.outputs.coverage_passed == 'false' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT="${{ steps.parse-current.outputs.coverage_percent }}"
+          BASELINE="${{ steps.parse-baseline.outputs.baseline_percent }}"
+          BODY="## ⚠️ Overall Coverage Dropped
+
+          Overall test coverage decreased from \`${BASELINE}%\` (baseline on main) to \`${CURRENT}%\`.
+
+          This may be expected if code was removed, but please confirm that
+          new and changed lines are still covered (check the diff-cover results above).
+
+          > This is a warning only — the job does not fail on overall coverage drops."
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body "${BODY}" \
+            --edit-last 2>/dev/null || \
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body "${BODY}"
 
       - name: Fail if pytest failed
         if: always() && steps.run-pytest.outcome == 'failure'
@@ -230,7 +253,7 @@ jobs:
             if [ "${PASSED}" = "true" ]; then
               echo "| Status | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
             else
-              echo "| Status | ❌ Failed — coverage dropped below baseline |" >> $GITHUB_STEP_SUMMARY
+              echo "| Status | ⚠️ Warning — coverage dropped below baseline |" >> $GITHUB_STEP_SUMMARY
             fi
           else
             echo "| Baseline (main) | No baseline found |" >> $GITHUB_STEP_SUMMARY
