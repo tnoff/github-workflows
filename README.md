@@ -1,10 +1,12 @@
 # GitHub Workflows
 
-Reusable GitHub Actions workflows for standardizing CI/CD across all application repositories.
+Reusable GitHub Actions workflows for standardizing CI/CD across all application repositories. GitLab CI equivalents are available under [`gitlab/`](./gitlab/) as part of an ongoing migration path.
 
 > **For Contributors:** See [DEVELOPMENT.md](./DEVELOPMENT.md) for local workflow validation and development setup.
 
 ## Table of Contents
+
+**GitHub Actions (`/.github/workflows/`)**
 
 - [ocir-push.yml](#ocir-pushyml) — Build and push Docker images to OCIR
 - [tag.yml](#tagyml) — Auto-create Git tags from a version file
@@ -16,6 +18,10 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [coverage-check.yml](#coverage-checkyml) — Compare PR coverage against baseline
 - [check-action-pins.yml](#check-action-pinsyml) — Enforce SHA-pinned action refs
 - [Self-Hosted Runners](#self-hosted-runners)
+
+**GitLab CI (`/gitlab/`)**
+
+- [gitlab/tag.yml](#gitlabtagyml) — Auto-create Git tags from a version file
 
 ## Available Workflows
 
@@ -640,3 +646,66 @@ When `allow_fork_prs: false`, the workflow will only run if:
 - The pull request originates from the same repository (not a fork)
 
 This prevents external contributors from triggering workflows on your self-hosted runners while still allowing your own PRs and pushes to run normally.
+
+---
+
+## GitLab CI Templates
+
+Templates under `gitlab/` are reusable GitLab CI job definitions. Include them in a consumer repo via `include:` and inherit with `extends:`. Configuration is passed via CI variables; outputs are exposed via `dotenv` artifacts.
+
+### `gitlab/tag.yml`
+
+Equivalent of [`tag.yml`](#tagyml) for GitLab CI. Reads a version file, checks if the tag already exists on the remote, and pushes it if not.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/tag.yml'
+
+tag-build:
+  extends: .tag
+  variables:
+    VERSION_FILE: './VERSION'
+```
+
+For a JSON file like `package.json`:
+
+```yaml
+tag-build:
+  extends: .tag
+  variables:
+    VERSION_FILE: './package.json'
+    VERSION_FILE_TYPE: 'json'
+    VERSION_JSON_KEY: 'version'
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERSION_FILE` | `./VERSION` | Path to version file |
+| `VERSION_FILE_TYPE` | `plain` | `plain` (raw text) or `json` |
+| `VERSION_JSON_KEY` | `version` | Key to extract when `VERSION_FILE_TYPE` is `json` |
+
+**Outputs (via `dotenv` artifact):**
+
+| Variable | Description |
+|----------|-------------|
+| `VERSION` | Version from file with `v` prefix (e.g., `v0.0.4`) |
+| `TAG_CREATED` | `true` if a new tag was created, `false` if skipped |
+| `TAG_EXISTS` | `true` if the tag already existed |
+
+**Permissions:**
+
+The CI job must be able to push tags to the repository. There are two options:
+
+**Option A — CI job token (simpler):** Enable push access for the built-in `CI_JOB_TOKEN` under **Settings → CI/CD → Token Access → "Allow CI job token to push to this repository"**. No extra variables needed; the template configures the remote automatically.
+
+**Option B — Deploy or personal access token:** Create a token with `write_repository` scope and store it as a CI variable named `GITLAB_PUSH_TOKEN`. The template will use it automatically when present. This is required if your GitLab instance doesn't support job token push access (self-hosted GitLab < 16.2).
+
+```yaml
+# Settings → CI/CD → Variables
+GITLAB_PUSH_TOKEN = <your deploy or PAT token>  # masked, not protected unless branch-locked
+```

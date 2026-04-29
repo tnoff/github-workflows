@@ -29,6 +29,12 @@ repos:
       - id: actionlint
         files: \.github/workflows/.*\.ya?ml$
 
+  # GitLab CI schema validation
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.33.0
+    hooks:
+      - id: check-gitlab-ci
+
   # Enforce that all uses: refs are pinned to a full 40-char commit SHA
   - repo: local
     hooks:
