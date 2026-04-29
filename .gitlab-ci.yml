@@ -1,5 +1,9 @@
+include:
+  - local: '/gitlab/tag.yml'
+
 stages:
   - validate
+  - tag
 
 pre-commit:
   stage: validate
@@ -11,4 +15,10 @@ pre-commit:
     - pre-commit run --all-files
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+tag-build:
+  extends: .tag
+  stage: tag
+  rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
