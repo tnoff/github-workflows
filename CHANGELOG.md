@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.27] - 2026-04-29
+
+### Added
+
+- `gitlab/discord-notify.yml`: new GitLab CI template for Discord notifications. Supports four notification types (`failure`, `success`, `mr_opened`, `mr_merged`) with auto-detected MR context (title, branch arrow, MR URL). The target channel is controlled via `DISCORD_WEBHOOK_URL`, overridable per job to route different event types to different channels.
+- `.gitlab-ci.yml`: this repo now has its own GitLab CI pipeline. Runs `pre-commit` on MRs and the default branch, creates a git tag on push to main via `gitlab/tag.yml`, and sends Discord notifications to `$DISCORD_MR_WEBHOOK` on MR pipelines and pushes to main.
+- `.pre-commit-config.yaml`: added `check-jsonschema` hook (`check-gitlab-ci`) to validate `.gitlab-ci.yml` against the official GitLab CI JSON schema on every commit.
+
+### Fixed
+
+- `gitlab/tag.yml`: git push would fail silently without credentials configured. The script now sets the remote URL to authenticate via `CI_JOB_TOKEN` by default, or `GITLAB_PUSH_TOKEN` if set, before pushing the tag. Also adds `git config user.email/name` required by some runners.
+
 ## [0.0.26] - 2026-04-29
 
 ### Added

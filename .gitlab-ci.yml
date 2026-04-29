@@ -1,9 +1,11 @@
 include:
   - local: '/gitlab/tag.yml'
+  - local: '/gitlab/discord-notify.yml'
 
 stages:
   - validate
   - tag
+  - notify
 
 pre-commit:
   stage: validate
@@ -22,3 +24,25 @@ tag-build:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: on_success
+
+notify-mr:
+  extends: .discord-notify
+  stage: notify
+  needs: []
+  variables:
+    NOTIFY_TYPE: mr_opened
+    DISCORD_WEBHOOK_URL: $DISCORD_MR_WEBHOOK
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+
+notify-merged:
+  extends: .discord-notify
+  stage: notify
+  needs: []
+  variables:
+    NOTIFY_TYPE: mr_merged
+    DISCORD_WEBHOOK_URL: $DISCORD_MR_WEBHOOK
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always

@@ -22,6 +22,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 **GitLab CI (`/gitlab/`)**
 
 - [gitlab/tag.yml](#gitlabtagyml) — Auto-create Git tags from a version file
+- [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
 
 ## Available Workflows
 
@@ -697,7 +698,63 @@ tag-build:
 | `TAG_CREATED` | `true` if a new tag was created, `false` if skipped |
 | `TAG_EXISTS` | `true` if the tag already existed |
 
+### `gitlab/discord-notify.yml`
+
+Sends Discord notifications for pipeline and merge request events. The embed title, color, and fields adapt automatically based on `NOTIFY_TYPE` and whether the job runs in an MR pipeline context.
+
+> **Note:** GitLab CI pipelines do not trigger on issue events. For issue notifications use GitLab's built-in Discord integration under **Settings → Integrations → Discord**.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/discord-notify.yml'
+
+notify-failure:
+  extends: .discord-notify
+  variables:
+    NOTIFY_TYPE: failure
+    DISCORD_WEBHOOK_URL: $DISCORD_FAILURES_WEBHOOK
+  rules:
+    - when: on_failure
+
+notify-mr:
+  extends: .discord-notify
+  variables:
+    NOTIFY_TYPE: mr_opened
+    DISCORD_WEBHOOK_URL: $DISCORD_MR_WEBHOOK
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: on_success
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NOTIFY_TYPE` | `failure` | Embed style: `failure`, `success`, `mr_opened`, or `mr_merged` |
+| `DISCORD_WEBHOOK_URL` | `$DISCORD_WEBHOOK_URL` | Webhook URL for the target channel. Override per job to send to different channels. Falls back to the `DISCORD_WEBHOOK_URL` project/group CI variable. |
+| `NOTIFY_MESSAGE` | `''` | Optional extra text appended to the embed |
+
+**Notification types:**
+
+| Type | Color | Use case |
+|------|-------|----------|
+| `failure` | Red | Pipeline failed |
+| `success` | Green | Pipeline succeeded |
+| `mr_opened` | Blue | MR opened or updated |
+| `mr_merged` | Purple | MR merged (push to default branch) |
+
+When running in an MR pipeline (`CI_PIPELINE_SOURCE == "merge_request_event"`), the embed automatically includes the MR title, number, and branch arrow (`source → target`) instead of commit SHA and branch.
+
 **Permissions:**
+
+No special permissions required. Set `DISCORD_WEBHOOK_URL` (or a per-channel equivalent) as a masked CI variable under **Settings → CI/CD → Variables**.
+
+---
+
+### `gitlab/tag.yml` — Permissions
 
 The CI job must be able to push tags to the repository. There are two options:
 

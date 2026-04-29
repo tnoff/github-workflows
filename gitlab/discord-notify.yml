@@ -1,0 +1,126 @@
+# Reusable GitLab CI template for Discord notifications.
+#
+# Supports pipeline failure/success and merge request event notifications.
+# Note: GitLab CI pipelines do not trigger on issue events — for issue
+# notifications use GitLab's built-in Discord integration under
+# Settings → Integrations → Discord.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/discord-notify.yml'
+#
+#   notify-failure:
+#     extends: .discord-notify
+#     variables:
+#       NOTIFY_TYPE: failure
+#     rules:
+#       - when: on_failure
+#
+#   notify-mr-opened:
+#     extends: .discord-notify
+#     variables:
+#       NOTIFY_TYPE: mr_opened
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#         when: on_success
+#
+# Required CI variable (set under Settings → CI/CD → Variables):
+#   DISCORD_WEBHOOK_URL   Discord webhook URL (mask this value)
+
+.discord-notify:
+  variables:
+    # NOTIFY_TYPE controls the embed title and color.
+    # Options: failure | success | mr_opened | mr_merged
+    NOTIFY_TYPE: failure
+    # Discord webhook URL for the target channel. Override per job to route
+    # different notification types to different channels. Falls back to
+    # DISCORD_WEBHOOK_URL if set as a project/group CI variable.
+    DISCORD_WEBHOOK_URL: $DISCORD_WEBHOOK_URL
+    # Optional extra message appended to the embed.
+    NOTIFY_MESSAGE: ''
+  image: python:3.14-slim
+  script:
+    - |
+      python3 - <<'PYEOF'
+      import json, os, sys, urllib.request, urllib.error
+
+      webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+      if not webhook_url:
+          print("DISCORD_WEBHOOK_URL is not set", file=sys.stderr)
+          sys.exit(1)
+      print(f"Webhook URL length: {len(webhook_url)}")
+
+      notify_type   = os.environ.get("NOTIFY_TYPE", "failure")
+      extra_message = os.environ.get("NOTIFY_MESSAGE", "")
+
+      project_name = os.environ.get("CI_PROJECT_NAME", "")
+      project_url  = os.environ.get("CI_PROJECT_URL", "")
+      actor        = os.environ.get("GITLAB_USER_NAME") or os.environ.get("CI_COMMIT_AUTHOR", "")
+      commit_sha   = os.environ.get("CI_COMMIT_SHORT_SHA", "")
+      branch       = os.environ.get("CI_COMMIT_REF_NAME", "")
+      pipeline_url = os.environ.get("CI_PIPELINE_URL", "")
+
+      mr_iid    = os.environ.get("CI_MERGE_REQUEST_IID", "")
+      mr_title  = os.environ.get("CI_MERGE_REQUEST_TITLE", "")
+      mr_source = os.environ.get("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "")
+      mr_target = os.environ.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", "")
+      mr_url    = f"{project_url}/-/merge_requests/{mr_iid}" if mr_iid else ""
+
+      CONFIG = {
+          "failure":   {"title": "Pipeline Failed",          "color": 15158332},  # red
+          "success":   {"title": "Pipeline Succeeded",       "color": 3066993},   # green
+          "mr_opened": {"title": "Merge Request Opened",     "color": 3447003},   # blue
+          "mr_merged": {"title": "Merge Request Merged",     "color": 10181046},  # purple
+      }
+      cfg = CONFIG.get(notify_type, CONFIG["failure"])
+
+      fields = [
+          {"name": "Project", "value": f"[{project_name}]({project_url})", "inline": True},
+          {"name": "Actor",   "value": actor,                               "inline": True},
+      ]
+
+      if mr_iid:
+          fields += [
+              {"name": "Merge Request", "value": f"[!{mr_iid} {mr_title}]({mr_url})", "inline": False},
+              {"name": "Branch",        "value": f"`{mr_source}` → `{mr_target}`",    "inline": False},
+          ]
+      else:
+          fields += [
+              {"name": "Branch", "value": f"`{branch}`",   "inline": True},
+              {"name": "Commit", "value": f"`{commit_sha}`", "inline": True},
+          ]
+
+      if pipeline_url:
+          fields.append({"name": "Pipeline", "value": pipeline_url, "inline": False})
+
+      if extra_message:
+          fields.append({"name": "Message", "value": extra_message, "inline": False})
+
+      payload = json.dumps({
+          "embeds": [{
+              "title":  cfg["title"],
+              "color":  cfg["color"],
+              "fields": fields,
+          }]
+      })
+
+      req = urllib.request.Request(
+          webhook_url,
+          data=payload.encode(),
+          headers={
+              "Content-Type": "application/json",
+              "User-Agent": "DiscordBot (github-workflows, 1.0)",
+          },
+          method="POST",
+      )
+      try:
+          urllib.request.urlopen(req)
+          print("Discord notification sent")
+      except urllib.error.HTTPError as e:
+          print(f"Failed to send Discord notification: {e.code} {e.reason}", file=sys.stderr)
+          print(f"Response: {e.read().decode()}", file=sys.stderr)
+          sys.exit(1)
+      PYEOF
