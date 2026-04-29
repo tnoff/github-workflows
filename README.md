@@ -23,6 +23,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 
 - [gitlab/tag.yml](#gitlabtagyml) — Auto-create Git tags from a version file
 - [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
+- [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
 
 ## Available Workflows
 
@@ -751,6 +752,48 @@ When running in an MR pipeline (`CI_PIPELINE_SOURCE == "merge_request_event"`), 
 **Permissions:**
 
 No special permissions required. Set `DISCORD_WEBHOOK_URL` (or a per-channel equivalent) as a masked CI variable under **Settings → CI/CD → Variables**.
+
+---
+
+### `gitlab/renovate.yml`
+
+Runs [Renovate](https://docs.renovatebot.com/) to open MRs for outdated dependencies. Designed to run on a scheduled pipeline — trigger interval is configured in **Settings → CI/CD → Schedules**, not in the YAML itself.
+
+When the schedule fires, Renovate scans the repo against its `renovate.json` config, opens MRs for any outdated dependencies it finds, and rebases existing Renovate MRs if a newer version has since been released. If nothing is outdated it does nothing.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/renovate.yml'
+
+renovate:
+  extends: .renovate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+```
+
+A `renovate.json` at the repo root controls which managers are enabled and any package rules:
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["pre-commit", "docker"],
+  "labels": ["dependencies"]
+}
+```
+
+**Variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RENOVATE_TOKEN` | ✅ | GitLab PAT with `api` scope — used to open and update MRs |
+
+**Permissions:**
+
+Create a GitLab PAT with `api` scope and store it as a masked CI variable named `RENOVATE_TOKEN` under **Settings → CI/CD → Variables**. Then create a schedule under **Settings → CI/CD → Schedules** (e.g. `0 3 * * 1` for Monday at 3am).
 
 ---
 

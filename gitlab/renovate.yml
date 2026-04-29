@@ -1,0 +1,29 @@
+# Reusable GitLab CI template for running Renovate dependency updates.
+#
+# Renovate opens MRs to update dependencies based on the repo's renovate.json config.
+# Run this on a scheduled pipeline — daily or weekly is typical.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/renovate.yml'
+#
+#   renovate:
+#     extends: .renovate
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "schedule"
+#
+# Required CI variables (set under Settings → CI/CD → Variables):
+#   RENOVATE_TOKEN      GitLab PAT with api scope — used to open/update MRs
+#
+.renovate:
+  image: renovate/renovate:39
+  variables:
+    RENOVATE_PLATFORM: gitlab
+    RENOVATE_ENDPOINT: $CI_API_V4_URL
+    RENOVATE_TOKEN: $RENOVATE_TOKEN
+    LOG_LEVEL: info
+  script:
+    - renovate $CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME

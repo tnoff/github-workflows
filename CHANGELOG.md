@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.28] - 2026-04-29
+
+### Added
+
+- `gitlab/renovate.yml`: new reusable GitLab CI template for running Renovate. Runs against the current project using `RENOVATE_TOKEN` (GitLab PAT with `api` scope). Intended for scheduled pipelines — wire up via `Settings → CI/CD → Schedules` in GitLab.
+- `renovate.json`: Renovate config for this repo. Enables `pre-commit` and `docker` managers to keep pre-commit hook revs and Docker image tags up to date. GitHub Actions manager intentionally excluded pending GitLab migration.
+
+### Fixed
+
+- `gitlab/discord-notify.yml`: requests were blocked by Cloudflare on GitLab shared runners (error code 1010) due to Python's default `Python-urllib` User-Agent. Fixed by sending `DiscordBot (github-workflows, 1.0)` as the User-Agent, which Cloudflare whitelists.
+- `gitlab/discord-notify.yml`: webhook URL is now stripped of whitespace before use, preventing 403s caused by trailing newlines in GitLab CI variable values.
+- `gitlab/discord-notify.yml`: Discord API response body is now printed on error, making failures easier to diagnose.
+- `.gitlab-ci.yml`: notify jobs now use `needs: []` and `when: always` so they run immediately and independently of the validate/tag stages.
+
 ## [0.0.27] - 2026-04-29
 
 ### Added

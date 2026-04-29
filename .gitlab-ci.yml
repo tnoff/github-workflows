@@ -1,11 +1,13 @@
 include:
   - local: '/gitlab/tag.yml'
   - local: '/gitlab/discord-notify.yml'
+  - local: '/gitlab/renovate.yml'
 
 stages:
   - validate
   - tag
   - notify
+  - renovate
 
 pre-commit:
   stage: validate
@@ -46,3 +48,9 @@ notify-merged:
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: always
+
+renovate:
+  extends: .renovate
+  stage: renovate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
