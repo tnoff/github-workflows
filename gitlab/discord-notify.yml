@@ -24,6 +24,10 @@
 #     variables:
 #       NOTIFY_TYPE: mr_opened
 #     rules:
+#       # Gate fork MRs behind a manual step so CI only runs after a member approves
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event" &&
+#              $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+#         when: manual
 #       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 #         when: on_success
 #
