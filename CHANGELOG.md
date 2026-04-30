@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.30] - 2026-04-30
+
+### Added
+
+- `gitlab/docker-push.yml`: new reusable GitLab CI template for building and pushing a multi-arch Docker image. Logs in to an OCI registry, installs QEMU binfmt handlers via `tonistiigi/binfmt`, builds with `--platform` (default `linux/arm64`), and pushes two tags: the short commit SHA and `latest`. Registry credentials and image coordinates are passed via `OCI_REGISTRY`, `OCI_NAMESPACE`, `OCI_REPO_NAME`, `OCI_USERNAME`, and `OCI_TOKEN` CI variables. Platform is overridable via the `DOCKER_PLATFORM` variable.
+
+### Changed
+
+- `.gitlab-ci.yml`: `pre-commit` no longer runs on push to the default branch (merge). Validation only runs on MR pipelines; tag and notify jobs remain on merge.
+
 ## [0.0.29] - 2026-04-29
 
 ### Added

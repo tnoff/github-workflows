@@ -25,6 +25,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
 - [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
 - [gitlab/bump-version.yml](#gitlabbump-versionyml) — Auto-bump patch version on a branch
+- [gitlab/docker-push.yml](#gitlabdocker-pushyml) — Build and push a multi-arch Docker image
 
 ## Available Workflows
 
@@ -823,6 +824,52 @@ bump-version:
 |----------|---------|-------------|
 | `VERSION_FILE` | `VERSION` | Path to the plain-text version file |
 | `COMPARE_BRANCH` | `$CI_DEFAULT_BRANCH` / `main` | Branch to compare against |
+
+---
+
+### `gitlab/docker-push.yml`
+
+Builds a Docker image for one or more platforms and pushes two tags to an OCI-compatible registry: the short commit SHA and `latest`. Uses Docker-in-Docker (`docker:27-dind`) and installs QEMU binfmt handlers via `tonistiigi/binfmt` so cross-platform builds work without a native runner for each architecture.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/docker-push.yml'
+
+docker-push:
+  extends: .docker-push
+  stage: build
+  needs: []
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      when: on_success
+```
+
+Override the target platform:
+
+```yaml
+docker-push:
+  extends: .docker-push
+  variables:
+    DOCKER_PLATFORM: 'linux/amd64'
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCKER_PLATFORM` | `linux/arm64` | Platform(s) to build (passed to `--platform`) |
+| `OCI_REGISTRY` | *(required)* | OCI registry hostname (e.g. `registry.example.com`) |
+| `OCI_NAMESPACE` | *(required)* | Registry namespace / organisation |
+| `OCI_REPO_NAME` | *(required)* | Image repository name |
+| `OCI_USERNAME` | *(required)* | Registry login username |
+| `OCI_TOKEN` | *(required)* | Registry login password / token — mask this value |
+
+**Permissions:**
+
+No special GitLab CI permissions required. Set `OCI_USERNAME` and `OCI_TOKEN` as masked CI variables under **Settings → CI/CD → Variables**.
 
 ---
 
