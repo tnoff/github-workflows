@@ -24,6 +24,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [gitlab/tag.yml](#gitlabtagyml) — Auto-create Git tags from a version file
 - [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
 - [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
+- [gitlab/bump-version.yml](#gitlabbump-versionyml) — Auto-bump patch version on a branch
 
 ## Available Workflows
 
@@ -794,6 +795,34 @@ A `renovate.json` at the repo root controls which managers are enabled and any p
 **Permissions:**
 
 Create a GitLab PAT with `api` scope and store it as a masked CI variable named `RENOVATE_TOKEN` under **Settings → CI/CD → Variables**. Then create a schedule under **Settings → CI/CD → Schedules** (e.g. `0 3 * * 1` for Monday at 3am).
+
+---
+
+### `gitlab/bump-version.yml`
+
+Auto-bumps the patch version on a branch by comparing the `VERSION` file against the default branch. If they match (not yet bumped), increments the patch version, commits, and pushes back to the source branch. Idempotent — exits cleanly if already bumped, preventing push loops.
+
+Requires CI job token push access (**Settings → CI/CD → Token Access**) or `GITLAB_PUSH_TOKEN` (deploy/PAT token with `write_repository` scope).
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/bump-version.yml'
+
+bump-version:
+  extends: .bump-version
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\//
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERSION_FILE` | `VERSION` | Path to the plain-text version file |
+| `COMPARE_BRANCH` | `$CI_DEFAULT_BRANCH` / `main` | Branch to compare against |
 
 ---
 

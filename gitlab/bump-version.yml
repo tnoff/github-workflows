@@ -1,0 +1,62 @@
+# Reusable GitLab CI template for auto-bumping the patch version on a branch.
+#
+# Compares the VERSION file on the current branch against the default branch.
+# If they match (no bump yet), increments the patch version, commits, and pushes
+# back to the source branch. Exits cleanly if already bumped, preventing loops.
+#
+# Requires "CI job token" push access under Settings → CI/CD → Token Access,
+# or set GITLAB_PUSH_TOKEN to a deploy/PAT token with write_repository scope.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/bump-version.yml'
+#
+#   bump-version:
+#     extends: .bump-version
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\//
+#
+# Optional variables:
+#   VERSION_FILE     Path to the plain-text version file (default: VERSION)
+#   COMPARE_BRANCH   Branch to compare against (default: $CI_DEFAULT_BRANCH, falls back to "main")
+
+.bump-version:
+  image: alpine:3
+  variables:
+    GIT_DEPTH: 0
+    VERSION_FILE: "VERSION"
+    COMPARE_BRANCH: ""
+  before_script:
+    - apk add --no-cache git
+  script:
+    - |
+      BRANCH="${COMPARE_BRANCH:-${CI_DEFAULT_BRANCH:-main}}"
+      git fetch origin "${BRANCH}"
+
+      BASE_VERSION=$(git show "origin/${BRANCH}:${VERSION_FILE}" | tr -d '[:space:]')
+      CURRENT_VERSION=$(cat "${VERSION_FILE}" | tr -d '[:space:]')
+
+      if [ "$BASE_VERSION" != "$CURRENT_VERSION" ]; then
+        echo "Version already bumped ($BASE_VERSION -> $CURRENT_VERSION), skipping"
+        exit 0
+      fi
+
+      MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+      MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+      PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+      NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))"
+      echo "$NEW_VERSION" > "${VERSION_FILE}"
+
+      git config user.email "ci@gitlab"
+      git config user.name "GitLab CI"
+      if [ -n "$GITLAB_PUSH_TOKEN" ]; then
+        git remote set-url origin "https://deploy-token:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      else
+        git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      fi
+      git add "${VERSION_FILE}"
+      git commit -m "chore: bump patch version to $NEW_VERSION"
+      git push origin "HEAD:$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
