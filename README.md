@@ -26,6 +26,8 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
 - [gitlab/bump-version.yml](#gitlabbump-versionyml) — Auto-bump patch version on a branch
 - [gitlab/docker-push.yml](#gitlabdocker-pushyml) — Build and push a multi-arch Docker image
+- [gitlab/trufflehog.yml](#gitlabtrufflehogyml) — Scan the repo for leaked secrets with TruffleHog
+- [gitlab/trufflehog-image.yml](#gitlabtrufflehog-imageyml) — Scan a built Docker image for leaked secrets with TruffleHog
 
 ## Available Workflows
 
@@ -870,6 +872,107 @@ docker-push:
 **Permissions:**
 
 No special GitLab CI permissions required. Set `OCI_USERNAME` and `OCI_TOKEN` as masked CI variables under **Settings → CI/CD → Variables**.
+
+---
+
+### `gitlab/trufflehog.yml`
+
+Scans the repo for leaked secrets using [TruffleHog](https://github.com/trufflesecurity/trufflehog). On a merge request pipeline, scans only the commits added in the MR (using `CI_MERGE_REQUEST_DIFF_BASE_SHA` as the `--since-commit`). On any other pipeline (push to default branch, scheduled, manual), scans the full git history of the current branch.
+
+By default, runs with `--only-verified --fail` so the job fails only when TruffleHog confirms a finding by validating the credential against its issuing API. This keeps noise low; flip `TRUFFLEHOG_EXTRA_ARGS` to drop `--only-verified` if you want unverified findings to fail too.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/trufflehog.yml'
+
+trufflehog:
+  extends: .trufflehog
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+```
+
+Exclude generated paths or known-safe fixtures by pointing `TRUFFLEHOG_EXCLUDE_PATHS` at a regex file committed to the repo:
+
+```yaml
+trufflehog:
+  extends: .trufflehog
+  variables:
+    TRUFFLEHOG_EXCLUDE_PATHS: '.trufflehog-exclude'
+```
+
+```
+# .trufflehog-exclude — one regex per line
+^vendor/
+^tests/fixtures/
+\.lock$
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRUFFLEHOG_IMAGE` | `trufflesecurity/trufflehog:latest` | Container image to run |
+| `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail` | Flags appended to `trufflehog git` |
+| `TRUFFLEHOG_EXCLUDE_PATHS` | `''` | Path to a file of newline-separated regex path excludes |
+| `TRUFFLEHOG_FULL_HISTORY` | `false` | Set to `true` to force a full-history scan even on MR pipelines |
+
+**Permissions:**
+
+No special CI permissions required. The job runs with the default `CI_JOB_TOKEN` and only reads the working tree.
+
+> **Note:** GitLab also ships built-in [Secret Detection](https://docs.gitlab.com/ee/user/application_security/secret_detection/) (Gitleaks-based) on paid tiers. Use that if you already have the security dashboard wired up; pick TruffleHog when you want verified-secret detection (it validates findings against the issuing API to filter false positives).
+
+---
+
+### `gitlab/trufflehog-image.yml`
+
+Companion to `gitlab/trufflehog.yml`. The source-level template scans tracked files; this one builds the image from the repo's Dockerfile and scans the assembled layers, which catches secrets that leak via a `RUN` command or a copied-then-deleted file but never appear in tracked source.
+
+The job is self-contained — it builds locally inside Docker-in-Docker and scans the resulting image tag. No registry push and no chaining with `gitlab/docker-push.yml` is required, so it can run pre-merge against MR branches with no credentials.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/trufflehog-image.yml'
+
+trufflehog-image:
+  extends: .trufflehog-image
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+```
+
+Build a non-default Dockerfile or target stage:
+
+```yaml
+trufflehog-image:
+  extends: .trufflehog-image
+  variables:
+    DOCKERFILE_PATH: docker/Dockerfile.prod
+    DOCKER_BUILD_ARGS: '--target runtime --build-arg APP_ENV=ci'
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOCKERFILE_PATH` | `Dockerfile` | Path to the Dockerfile to build |
+| `DOCKER_CONTEXT` | `.` | Docker build context directory |
+| `DOCKER_BUILD_ARGS` | `''` | Extra flags appended to `docker build` (e.g. `--target prod --build-arg X=y`) |
+| `TRUFFLEHOG_VERSION` | `''` | Pin a TruffleHog release (e.g. `3.83.7`). Empty installs the latest release. |
+| `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail` | Flags appended to `trufflehog docker` |
+
+**Permissions:**
+
+No registry credentials required — the build never pushes. The job uses Docker-in-Docker, so the GitLab runner must permit `services: docker:27-dind` (default on shared runners; on self-hosted runners ensure the executor allows privileged services).
+
+> **Note:** This template installs TruffleHog by piping the upstream `install.sh` from `raw.githubusercontent.com` at job time. Pin `TRUFFLEHOG_VERSION` if your security policy disallows running unpinned upstream scripts.
 
 ---
 

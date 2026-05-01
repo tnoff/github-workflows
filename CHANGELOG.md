@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.31] - 2026-05-01
+
+### Added
+
+- `gitlab/trufflehog.yml`: new reusable GitLab CI template for scanning the repo with [TruffleHog](https://github.com/trufflesecurity/trufflehog). On MR pipelines, scans only commits added in the MR via `--since-commit $CI_MERGE_REQUEST_DIFF_BASE_SHA`; on default-branch / scheduled / manual pipelines, scans the full git history. Defaults to `--only-verified --fail` so the job fails only on credentials TruffleHog validates against the issuing API. Configurable via `TRUFFLEHOG_EXTRA_ARGS`, `TRUFFLEHOG_EXCLUDE_PATHS` (regex file), and `TRUFFLEHOG_FULL_HISTORY`.
+- `gitlab/trufflehog-image.yml`: companion template that builds the repo's Dockerfile inside Docker-in-Docker and scans the resulting image with TruffleHog's `docker` mode. Catches secrets baked into image layers (e.g. via a leaky `RUN` command or copied-then-deleted file) that source-level scanning misses. Self-contained — no registry pull or chaining with `gitlab/docker-push.yml` required. Configurable via `DOCKERFILE_PATH`, `DOCKER_CONTEXT`, `DOCKER_BUILD_ARGS`, `TRUFFLEHOG_VERSION`, and `TRUFFLEHOG_EXTRA_ARGS`.
+
 ## [0.0.30] - 2026-04-30
 
 ### Added

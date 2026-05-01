@@ -1,0 +1,63 @@
+# Reusable GitLab CI template for scanning a repository with TruffleHog.
+#
+# In an MR pipeline, scans only commits added in the MR (since the merge-base
+# with the target branch). On any other pipeline (push to default branch,
+# scheduled, manual), scans the full git history of the current branch.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/trufflehog.yml'
+#
+#   trufflehog:
+#     extends: .trufflehog
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+#
+# Optional variables:
+#   TRUFFLEHOG_IMAGE          Container image (default: trufflesecurity/trufflehog:latest)
+#   TRUFFLEHOG_EXTRA_ARGS     Extra flags passed to `trufflehog git` (default: --only-verified --fail)
+#   TRUFFLEHOG_EXCLUDE_PATHS  Path to a file with newline-separated regex path excludes (default: empty)
+#   TRUFFLEHOG_FULL_HISTORY   Force a full-history scan even on MR pipelines (default: false)
+
+.trufflehog:
+  image:
+    name: trufflesecurity/trufflehog:latest
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 0
+    TRUFFLEHOG_EXTRA_ARGS: "--only-verified --fail"
+    TRUFFLEHOG_EXCLUDE_PATHS: ""
+    TRUFFLEHOG_FULL_HISTORY: "false"
+  script:
+    - |
+      EXCLUDE_FLAG=""
+      if [ -n "$TRUFFLEHOG_EXCLUDE_PATHS" ]; then
+        if [ ! -f "$TRUFFLEHOG_EXCLUDE_PATHS" ]; then
+          echo "TRUFFLEHOG_EXCLUDE_PATHS=$TRUFFLEHOG_EXCLUDE_PATHS does not exist" >&2
+          exit 1
+        fi
+        EXCLUDE_FLAG="--exclude-paths=$TRUFFLEHOG_EXCLUDE_PATHS"
+      fi
+
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ] && [ "$TRUFFLEHOG_FULL_HISTORY" != "true" ]; then
+        # Scan only commits added in this MR. CI_MERGE_REQUEST_DIFF_BASE_SHA is
+        # the merge-base with the target branch, so --since-commit limits the
+        # scan to new history introduced by the MR.
+        SINCE="$CI_MERGE_REQUEST_DIFF_BASE_SHA"
+        echo "Scanning MR commits $SINCE..$CI_COMMIT_SHA"
+        trufflehog git "file://$CI_PROJECT_DIR" \
+          --since-commit "$SINCE" \
+          --branch "$CI_COMMIT_SHA" \
+          $EXCLUDE_FLAG \
+          $TRUFFLEHOG_EXTRA_ARGS
+      else
+        echo "Scanning full history of $CI_COMMIT_REF_NAME"
+        trufflehog git "file://$CI_PROJECT_DIR" \
+          --branch "$CI_COMMIT_SHA" \
+          $EXCLUDE_FLAG \
+          $TRUFFLEHOG_EXTRA_ARGS
+      fi

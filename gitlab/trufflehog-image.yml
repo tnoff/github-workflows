@@ -1,0 +1,66 @@
+# Reusable GitLab CI template for scanning a locally-built Docker image with TruffleHog.
+#
+# Companion to gitlab/trufflehog.yml: that one scans repo source, this one
+# scans the assembled image so secrets baked into a layer (e.g. a leaky RUN
+# command, a copied-then-deleted file) are caught even if they never appear
+# in tracked source.
+#
+# This template is self-contained: it builds the image from the repo's
+# Dockerfile inside the job and scans the resulting local image. It does not
+# pull from a registry, so it can run pre-merge against PR branches without
+# any push credentials.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/trufflehog-image.yml'
+#
+#   trufflehog-image:
+#     extends: .trufflehog-image
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+#
+# Optional variables:
+#   DOCKERFILE_PATH        Path to Dockerfile (default: Dockerfile)
+#   DOCKER_CONTEXT         Build context directory (default: .)
+#   DOCKER_BUILD_ARGS      Extra args appended to `docker build`
+#                          (e.g. "--build-arg FOO=bar --target prod")
+#   TRUFFLEHOG_VERSION     Pin a TruffleHog release (e.g. "3.83.7"). Empty = latest.
+#   TRUFFLEHOG_EXTRA_ARGS  Extra flags passed to `trufflehog docker`
+#                          (default: --only-verified --fail)
+
+.trufflehog-image:
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKERFILE_PATH: "Dockerfile"
+    DOCKER_CONTEXT: "."
+    DOCKER_BUILD_ARGS: ""
+    TRUFFLEHOG_VERSION: ""
+    TRUFFLEHOG_EXTRA_ARGS: "--only-verified --fail"
+  before_script:
+    - apk add --no-cache curl
+    # Install trufflehog binary into the job container. The CLI talks to the
+    # dind daemon over $DOCKER_HOST (set automatically by GitLab CI), so
+    # `trufflehog docker --image <local-tag>` resolves the locally-built
+    # image without a registry round-trip.
+    - |
+      if [ -n "$TRUFFLEHOG_VERSION" ]; then
+        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+          | sh -s -- -b /usr/local/bin "v${TRUFFLEHOG_VERSION}"
+      else
+        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
+          | sh -s -- -b /usr/local/bin
+      fi
+    - trufflehog --version
+  script:
+    - SCAN_IMAGE="trufflehog-scan:$CI_COMMIT_SHORT_SHA"
+    - echo "Building $SCAN_IMAGE from $DOCKERFILE_PATH"
+    - docker build -f "$DOCKERFILE_PATH" -t "$SCAN_IMAGE" $DOCKER_BUILD_ARGS "$DOCKER_CONTEXT"
+    - echo "Scanning $SCAN_IMAGE"
+    - trufflehog docker --image "$SCAN_IMAGE" $TRUFFLEHOG_EXTRA_ARGS
