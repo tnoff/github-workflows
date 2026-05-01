@@ -932,7 +932,7 @@ No special CI permissions required. The job runs with the default `CI_JOB_TOKEN`
 
 Companion to `gitlab/trufflehog.yml`. The source-level template scans tracked files; this one builds the image from the repo's Dockerfile and scans the assembled layers, which catches secrets that leak via a `RUN` command or a copied-then-deleted file but never appear in tracked source.
 
-The job is self-contained — it builds locally inside Docker-in-Docker and scans the resulting image tag. No registry push and no chaining with `gitlab/docker-push.yml` is required, so it can run pre-merge against MR branches with no credentials.
+The job is self-contained — it builds locally inside Docker-in-Docker, saves the result with `docker save`, and scans the tarball via TruffleHog's `file://` image reference. No registry push or pull and no chaining with `gitlab/docker-push.yml` is required, so it can run pre-merge against MR branches with no credentials.
 
 ```yaml
 # In your app repository's .gitlab-ci.yml
