@@ -958,6 +958,28 @@ trufflehog-image:
     DOCKER_BUILD_ARGS: '--target runtime --build-arg APP_ENV=ci'
 ```
 
+Reuse a tarball from an upstream build job instead of rebuilding the image:
+
+```yaml
+build-image:
+  stage: build
+  image: docker.io/library/docker:27
+  services:
+    - docker.io/library/docker:27-dind
+  script:
+    - docker build -t app:$CI_COMMIT_SHORT_SHA .
+    - docker save app:$CI_COMMIT_SHORT_SHA -o image.tar
+  artifacts:
+    paths:
+      - image.tar
+
+trufflehog-image:
+  extends: .trufflehog-image
+  needs: [build-image]
+  variables:
+    TRUFFLEHOG_IMAGE_TARBALL: image.tar
+```
+
 **Variables:**
 
 | Variable | Default | Description |
@@ -965,6 +987,7 @@ trufflehog-image:
 | `DOCKERFILE_PATH` | `Dockerfile` | Path to the Dockerfile to build |
 | `DOCKER_CONTEXT` | `.` | Docker build context directory |
 | `DOCKER_BUILD_ARGS` | `''` | Extra flags appended to `docker build` (e.g. `--target prod --build-arg X=y`) |
+| `TRUFFLEHOG_IMAGE_TARBALL` | `''` | Path to a pre-built `docker save` tarball. If set, the build step is skipped and this tarball is scanned directly — pair with `needs: [<build-job>]` so the artifact is fetched. |
 | `TRUFFLEHOG_VERSION` | `''` | Pin a TruffleHog release (e.g. `3.83.7`). Empty installs the latest release. |
 | `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail` | Flags appended to `trufflehog docker` |
 

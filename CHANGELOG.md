@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.34] - 2026-05-03
+
+### Added
+
+- `gitlab/trufflehog-image.yml`: new optional `TRUFFLEHOG_IMAGE_TARBALL` variable. When set, the template skips the local `docker build` / `docker save` step and scans the supplied tarball directly. Lets a consumer chain off an upstream build job (e.g. `gitlab/docker-push.yml`) via `needs: [<build-job>]` and an artifact, instead of rebuilding the image just to scan it.
+
 ## [0.0.33] - 2026-05-03
 
 ### Changed
