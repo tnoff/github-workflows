@@ -915,7 +915,7 @@ trufflehog:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TRUFFLEHOG_IMAGE` | `trufflesecurity/trufflehog:latest` | Container image to run |
+| `TRUFFLEHOG_IMAGE` | `docker.io/trufflesecurity/trufflehog:latest` | Container image to run |
 | `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail` | Flags appended to `trufflehog git` |
 | `TRUFFLEHOG_EXCLUDE_PATHS` | `''` | Path to a file of newline-separated regex path excludes |
 | `TRUFFLEHOG_FULL_HISTORY` | `false` | Set to `true` to force a full-history scan even on MR pipelines |

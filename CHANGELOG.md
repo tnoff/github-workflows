@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.33] - 2026-05-03
+
+### Changed
+
+- All template image references are now fully qualified with `docker.io/...` so they work on runtimes that enforce CRI-O's `short-name-mode = "enforcing"` (e.g. Oracle Linux nodes on OKE). Containerd and Docker auto-resolve short names so this is invisible there. Affects:
+  - `gitlab/trufflehog.yml`: `trufflesecurity/trufflehog:latest` → `docker.io/trufflesecurity/trufflehog:latest`
+  - `gitlab/renovate.yml`: `renovate/renovate:43` → `docker.io/renovate/renovate:43`
+  - `gitlab/bump-version.yml`: `alpine:3` → `docker.io/library/alpine:3`
+  - `gitlab/discord-notify.yml`: `python:3.14-slim` → `docker.io/library/python:3.14-slim`
+  - `gitlab/docker-push.yml`: `docker:27` (image) and `docker:27-dind` (service) → `docker.io/library/docker:27` and `docker.io/library/docker:27-dind`
+  - `gitlab/trufflehog-image.yml`: same as docker-push.yml
+
+### Fixed
+
+- `gitlab/tag.yml`: explicitly declares `image: docker.io/library/alpine:3` and a `before_script` that installs `git` and `jq`. Previously the template inherited whatever image the consumer or runner default supplied — fine on shared runners with a fat default that includes `git`, but the script's `git` and `jq` (used on the `VERSION_FILE_TYPE=json` branch) would fail with `command not found` on a minimal alpine runner default.
+
 ## [0.0.32] - 2026-05-01
 
 ### Fixed

@@ -22,10 +22,13 @@
 #         when: on_success
 
 .tag:
+  image: docker.io/library/alpine:3
   variables:
     VERSION_FILE: './VERSION'
     VERSION_FILE_TYPE: 'plain'
     VERSION_JSON_KEY: 'version'
+  before_script:
+    - apk add --no-cache git jq
   script:
     - |
       if [ "$VERSION_FILE_TYPE" = "json" ]; then
