@@ -820,11 +820,26 @@ bump-version:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\//
 ```
 
+For a JSON file like `package.json`:
+
+```yaml
+bump-version:
+  extends: .bump-version
+  variables:
+    VERSION_FILE: 'package.json'
+    VERSION_FILE_TYPE: 'json'
+    VERSION_JSON_KEY: 'version'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\//
+```
+
 **Variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VERSION_FILE` | `VERSION` | Path to the plain-text version file |
+| `VERSION_FILE` | `VERSION` | Path to the version file |
+| `VERSION_FILE_TYPE` | `plain` | `plain` (raw text) or `json` |
+| `VERSION_JSON_KEY` | `version` | Key holding the version when `VERSION_FILE_TYPE` is `json` |
 | `COMPARE_BRANCH` | `$CI_DEFAULT_BRANCH` / `main` | Branch to compare against |
 
 ---

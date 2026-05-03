@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.35] - 2026-05-03
+
+### Added
+
+- `gitlab/bump-version.yml`: now supports JSON version files (e.g. `package.json`) via `VERSION_FILE_TYPE: 'json'` and `VERSION_JSON_KEY` (default `version`), matching the surface area `gitlab/tag.yml` already exposed. JSON files are rewritten with `jq --indent 2`, preserving key order. The default behaviour is unchanged: `VERSION_FILE_TYPE` defaults to `plain` and consumers using a plain-text `VERSION` file need no changes. Adds `jq` to the alpine `apk add` line.
+
 ## [0.0.34] - 2026-05-03
 
 ### Added
