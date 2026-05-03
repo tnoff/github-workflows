@@ -19,7 +19,7 @@
 #   RENOVATE_TOKEN      GitLab PAT with api scope — used to open/update MRs
 #
 .renovate:
-  image: renovate/renovate:43
+  image: docker.io/renovate/renovate:43
   variables:
     RENOVATE_PLATFORM: gitlab
     RENOVATE_ENDPOINT: $CI_API_V4_URL

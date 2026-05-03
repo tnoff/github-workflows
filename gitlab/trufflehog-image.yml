@@ -33,9 +33,9 @@
 #                          (default: --only-verified --fail)
 
 .trufflehog-image:
-  image: docker:27
+  image: docker.io/library/docker:27
   services:
-    - docker:27-dind
+    - docker.io/library/docker:27-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKERFILE_PATH: "Dockerfile"

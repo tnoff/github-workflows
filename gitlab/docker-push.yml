@@ -26,9 +26,9 @@
 #   OCI_TOKEN       Registry login password / token (mask this value)
 
 .docker-push:
-  image: docker:27
+  image: docker.io/library/docker:27
   services:
-    - docker:27-dind
+    - docker.io/library/docker:27-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_PLATFORM: "linux/arm64"

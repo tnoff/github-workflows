@@ -12,7 +12,9 @@ stages:
 
 pre-commit:
   stage: validate
-  image: python:3.14-slim
+  image: docker.io/library/python:3.14-slim
+  tags:
+    - self-hosted
   before_script:
     - apt-get update -qq && apt-get install -y -qq git
     - pip install pre-commit
@@ -27,6 +29,8 @@ pre-commit:
 trufflehog:
   extends: .trufflehog
   stage: validate
+  tags:
+    - self-hosted
   rules:
     # Fork MRs require a project member to manually trigger jobs — prevents untrusted code from running CI automatically
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
@@ -36,6 +40,8 @@ trufflehog:
 tag-build:
   extends: .tag
   stage: tag
+  tags:
+    - self-hosted
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
       when: on_success
@@ -44,6 +50,8 @@ notify-mr:
   extends: .discord-notify
   stage: notify
   needs: []
+  tags:
+    - self-hosted
   variables:
     NOTIFY_TYPE: mr_opened
     DISCORD_WEBHOOK_URL: $DISCORD_MR_WEBHOOK
@@ -58,6 +66,8 @@ notify-tag-failure:
   extends: .discord-notify
   stage: notify
   needs: [tag-build]
+  tags:
+    - self-hosted
   variables:
     NOTIFY_TYPE: failure
     DISCORD_WEBHOOK_URL: $DISCORD_BUILD_FAILURE_WEBHOOK
@@ -69,6 +79,8 @@ notify-merged:
   extends: .discord-notify
   stage: notify
   needs: []
+  tags:
+    - self-hosted
   variables:
     NOTIFY_TYPE: mr_merged
     DISCORD_WEBHOOK_URL: $DISCORD_MR_WEBHOOK
@@ -79,5 +91,7 @@ notify-merged:
 renovate:
   extends: .renovate
   stage: renovate
+  tags:
+    - self-hosted
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"

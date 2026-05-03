@@ -45,7 +45,7 @@
     DISCORD_WEBHOOK_URL: $DISCORD_WEBHOOK_URL
     # Optional extra message appended to the embed.
     NOTIFY_MESSAGE: ''
-  image: python:3.14-slim
+  image: docker.io/library/python:3.14-slim
   script:
     - |
       python3 - <<'PYEOF'

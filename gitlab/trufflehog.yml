@@ -25,7 +25,7 @@
 
 .trufflehog:
   image:
-    name: trufflesecurity/trufflehog:latest
+    name: docker.io/trufflesecurity/trufflehog:latest
     entrypoint: [""]
   variables:
     GIT_DEPTH: 0

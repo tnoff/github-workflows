@@ -24,7 +24,7 @@
 #   COMPARE_BRANCH   Branch to compare against (default: $CI_DEFAULT_BRANCH, falls back to "main")
 
 .bump-version:
-  image: alpine:3
+  image: docker.io/library/alpine:3
   variables:
     GIT_DEPTH: 0
     VERSION_FILE: "VERSION"
