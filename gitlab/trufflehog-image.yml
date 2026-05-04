@@ -1,14 +1,14 @@
-# Reusable GitLab CI template for scanning a locally-built Docker image with TruffleHog.
+# Reusable GitLab CI template for scanning a Docker image tarball with TruffleHog.
 #
 # Companion to gitlab/trufflehog.yml: that one scans repo source, this one
 # scans the assembled image so secrets baked into a layer (e.g. a leaky RUN
 # command, a copied-then-deleted file) are caught even if they never appear
 # in tracked source.
 #
-# This template is self-contained: it builds the image from the repo's
-# Dockerfile inside the job and scans the resulting local image. It does not
-# pull from a registry, so it can run pre-merge against PR branches without
-# any push credentials.
+# This template scans a `docker save` tarball produced by an upstream build
+# job. It does not build the image itself — wire it up with `needs:` to a
+# job that publishes the tarball as an artifact. TruffleHog reads the OCI
+# tarball directly, so no Docker daemon is required in this job.
 #
 # Usage in consumer repo's .gitlab-ci.yml:
 #
@@ -19,43 +19,35 @@
 #
 #   trufflehog-image:
 #     extends: .trufflehog-image
+#     needs:
+#       - job: build-image
+#         artifacts: true
+#     variables:
+#       TRUFFLEHOG_IMAGE_TARBALL: "image.tar"
 #     rules:
 #       - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 #       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
 #
+# Required variables:
+#   TRUFFLEHOG_IMAGE_TARBALL Path to a `docker save` tarball, typically fetched
+#                            from an upstream build job's artifacts.
+#
 # Optional variables:
-#   DOCKERFILE_PATH          Path to Dockerfile (default: Dockerfile)
-#   DOCKER_CONTEXT           Build context directory (default: .)
-#   DOCKER_BUILD_ARGS        Extra args appended to `docker build`
-#                            (e.g. "--build-arg FOO=bar --target prod")
-#   TRUFFLEHOG_IMAGE_TARBALL Path to a pre-built `docker save` tarball (e.g. from
-#                            an upstream build job's artifacts). If set, the
-#                            build step is skipped and this tarball is scanned
-#                            directly — saves rebuilding the image just to scan
-#                            it. Pair with `needs: [<build-job>]` so the
-#                            artifact is fetched.
 #   TRUFFLEHOG_VERSION       Pin a TruffleHog release (e.g. "3.83.7"). Empty = latest.
 #   TRUFFLEHOG_EXTRA_ARGS    Extra flags passed to `trufflehog docker`
-#                            (default: --only-verified --fail)
+#                            (default: --only-verified --fail --concurrency=2).
+#                            The concurrency cap keeps memory predictable on
+#                            larger images; raise it if you need throughput
+#                            and have headroom.
 
 .trufflehog-image:
-  image: docker.io/library/docker:27
-  services:
-    - docker.io/library/docker:27-dind
+  image: docker.io/library/alpine:3
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKERFILE_PATH: "Dockerfile"
-    DOCKER_CONTEXT: "."
-    DOCKER_BUILD_ARGS: ""
     TRUFFLEHOG_IMAGE_TARBALL: ""
     TRUFFLEHOG_VERSION: ""
-    TRUFFLEHOG_EXTRA_ARGS: "--only-verified --fail"
+    TRUFFLEHOG_EXTRA_ARGS: "--only-verified --fail --concurrency=2"
   before_script:
     - apk add --no-cache curl
-    # `trufflehog docker --image <tag>` resolves references via a registry,
-    # not the local daemon, so a bare tag like `foo:abc123` gets normalized
-    # to docker.io/library/foo:abc123 and fails with UNAUTHORIZED. Save the
-    # built image to a tarball and point trufflehog at the file instead.
     - |
       if [ -n "$TRUFFLEHOG_VERSION" ]; then
         curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh \
@@ -67,15 +59,10 @@
     - trufflehog --version
   script:
     - |
-      if [ -n "$TRUFFLEHOG_IMAGE_TARBALL" ]; then
-        SCAN_TARBALL="$TRUFFLEHOG_IMAGE_TARBALL"
-        echo "Scanning pre-built tarball $SCAN_TARBALL"
-      else
-        SCAN_IMAGE="trufflehog-scan:$CI_COMMIT_SHORT_SHA"
-        SCAN_TARBALL="/tmp/${CI_COMMIT_SHORT_SHA}.tar"
-        echo "Building $SCAN_IMAGE from $DOCKERFILE_PATH"
-        docker build -f "$DOCKERFILE_PATH" -t "$SCAN_IMAGE" $DOCKER_BUILD_ARGS "$DOCKER_CONTEXT"
-        docker save "$SCAN_IMAGE" -o "$SCAN_TARBALL"
-        echo "Saved $SCAN_IMAGE to $SCAN_TARBALL"
+      if [ -z "$TRUFFLEHOG_IMAGE_TARBALL" ]; then
+        echo "ERROR: TRUFFLEHOG_IMAGE_TARBALL must be set to the path of a docker save tarball." >&2
+        echo "Provide it via an upstream build job's artifacts and link with 'needs:'." >&2
+        exit 1
       fi
-      trufflehog docker --image "file://$SCAN_TARBALL" $TRUFFLEHOG_EXTRA_ARGS
+      echo "Scanning $TRUFFLEHOG_IMAGE_TARBALL"
+      trufflehog docker --image "file://$TRUFFLEHOG_IMAGE_TARBALL" $TRUFFLEHOG_EXTRA_ARGS

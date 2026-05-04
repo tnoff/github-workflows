@@ -945,9 +945,9 @@ No special CI permissions required. The job runs with the default `CI_JOB_TOKEN`
 
 ### `gitlab/trufflehog-image.yml`
 
-Companion to `gitlab/trufflehog.yml`. The source-level template scans tracked files; this one builds the image from the repo's Dockerfile and scans the assembled layers, which catches secrets that leak via a `RUN` command or a copied-then-deleted file but never appear in tracked source.
+Companion to `gitlab/trufflehog.yml`. The source-level template scans tracked files; this one scans an assembled image's layers, which catches secrets that leak via a `RUN` command or a copied-then-deleted file but never appear in tracked source.
 
-The job is self-contained — it builds locally inside Docker-in-Docker, saves the result with `docker save`, and scans the tarball via TruffleHog's `file://` image reference. No registry push or pull and no chaining with `gitlab/docker-push.yml` is required, so it can run pre-merge against MR branches with no credentials.
+The template scans a `docker save` tarball produced by an upstream build job — it does not build the image itself. TruffleHog reads the OCI tarball directly via `file://`, so the scan job runs on a slim `alpine:3` image with no Docker-in-Docker service. Wire it up with `needs:` to a job that publishes the tarball as an artifact.
 
 ```yaml
 # In your app repository's .gitlab-ci.yml
@@ -956,26 +956,6 @@ include:
     ref: main
     file: '/gitlab/trufflehog-image.yml'
 
-trufflehog-image:
-  extends: .trufflehog-image
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
-```
-
-Build a non-default Dockerfile or target stage:
-
-```yaml
-trufflehog-image:
-  extends: .trufflehog-image
-  variables:
-    DOCKERFILE_PATH: docker/Dockerfile.prod
-    DOCKER_BUILD_ARGS: '--target runtime --build-arg APP_ENV=ci'
-```
-
-Reuse a tarball from an upstream build job instead of rebuilding the image:
-
-```yaml
 build-image:
   stage: build
   image: docker.io/library/docker:27
@@ -990,25 +970,27 @@ build-image:
 
 trufflehog-image:
   extends: .trufflehog-image
-  needs: [build-image]
+  needs:
+    - job: build-image
+      artifacts: true
   variables:
     TRUFFLEHOG_IMAGE_TARBALL: image.tar
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
 ```
 
 **Variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DOCKERFILE_PATH` | `Dockerfile` | Path to the Dockerfile to build |
-| `DOCKER_CONTEXT` | `.` | Docker build context directory |
-| `DOCKER_BUILD_ARGS` | `''` | Extra flags appended to `docker build` (e.g. `--target prod --build-arg X=y`) |
-| `TRUFFLEHOG_IMAGE_TARBALL` | `''` | Path to a pre-built `docker save` tarball. If set, the build step is skipped and this tarball is scanned directly — pair with `needs: [<build-job>]` so the artifact is fetched. |
+| `TRUFFLEHOG_IMAGE_TARBALL` | *(required)* | Path to a `docker save` tarball, typically fetched from an upstream build job's artifacts. |
 | `TRUFFLEHOG_VERSION` | `''` | Pin a TruffleHog release (e.g. `3.83.7`). Empty installs the latest release. |
-| `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail` | Flags appended to `trufflehog docker` |
+| `TRUFFLEHOG_EXTRA_ARGS` | `--only-verified --fail --concurrency=2` | Flags appended to `trufflehog docker`. The concurrency cap keeps memory predictable on larger images (TruffleHog otherwise spawns one worker per CPU); raise it if you need throughput and have headroom. |
 
 **Permissions:**
 
-No registry credentials required — the build never pushes. The job uses Docker-in-Docker, so the GitLab runner must permit `services: docker:27-dind` (default on shared runners; on self-hosted runners ensure the executor allows privileged services).
+No registry credentials required — the scan job neither pulls nor pushes. The upstream build job that produces the tarball is what needs Docker-in-Docker; the scan job itself does not.
 
 > **Note:** This template installs TruffleHog by piping the upstream `install.sh` from `raw.githubusercontent.com` at job time. Pin `TRUFFLEHOG_VERSION` if your security policy disallows running unpinned upstream scripts.
 

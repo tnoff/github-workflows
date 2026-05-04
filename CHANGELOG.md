@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.36] - 2026-05-04
+
+### Changed
+
+- `gitlab/trufflehog-image.yml`: dropped the in-job `docker build` / `docker save` flow and the `docker:27-dind` service. The template now requires `TRUFFLEHOG_IMAGE_TARBALL` to point at a `docker save` tarball produced by an upstream build job (wired up via `needs:`), and runs on `docker.io/library/alpine:3` with no Docker daemon. TruffleHog reads the OCI tarball directly via `file://`. Removes the dind memory baseline and ~10s daemon startup from the scan job. **Breaking** for consumers that relied on the self-contained build-and-scan behaviour — they now need an upstream job that publishes the tarball as an artifact. Removed variables: `DOCKERFILE_PATH`, `DOCKER_CONTEXT`, `DOCKER_BUILD_ARGS`.
+- `gitlab/trufflehog-image.yml`: default `TRUFFLEHOG_EXTRA_ARGS` now includes `--concurrency=2`. TruffleHog otherwise spawns one scan worker per `runtime.NumCPU()`, which on unbounded CI pods drives memory peaks of 1–2 GiB on larger images. Capping at 2 keeps memory predictable at the cost of ~20–30% scan time; raise it via override when you have headroom.
+
 ## [0.0.35] - 2026-05-03
 
 ### Added
