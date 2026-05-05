@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.37] - 2026-05-05
+
+### Changed
+
+- `gitlab/docker-push.yml`: now reads OCI registry credentials from base64-encoded variables (`OCI_USERNAME_64`, `OCI_TOKEN_64`, `OCI_REGISTRY_64`, `OCI_NAMESPACE_64`, `OCI_REPO_NAME_64`) and decodes them in `before_script`. GitLab's masking length requirement rejects short values (e.g. namespace, repo name) when stored as plaintext; base64-encoding lets all of them be stored as masked CI variables. **Breaking** for consumers — rename the CI variables in **Settings → CI/CD → Variables** and store the base64-encoded values (e.g. `printf '%s' "$value" | base64`).
+
 ## [0.0.36] - 2026-05-04
 
 ### Changed

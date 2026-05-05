@@ -878,15 +878,17 @@ docker-push:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCKER_PLATFORM` | `linux/arm64` | Platform(s) to build (passed to `--platform`) |
-| `OCI_REGISTRY` | *(required)* | OCI registry hostname (e.g. `registry.example.com`) |
-| `OCI_NAMESPACE` | *(required)* | Registry namespace / organisation |
-| `OCI_REPO_NAME` | *(required)* | Image repository name |
-| `OCI_USERNAME` | *(required)* | Registry login username |
-| `OCI_TOKEN` | *(required)* | Registry login password / token — mask this value |
+| `OCI_REGISTRY_64` | *(required)* | OCI registry hostname (e.g. `registry.example.com`), base64-encoded |
+| `OCI_NAMESPACE_64` | *(required)* | Registry namespace / organisation, base64-encoded |
+| `OCI_REPO_NAME_64` | *(required)* | Image repository name, base64-encoded |
+| `OCI_USERNAME_64` | *(required)* | Registry login username, base64-encoded |
+| `OCI_TOKEN_64` | *(required)* | Registry login password / token, base64-encoded |
+
+All values are base64-encoded so short ones (e.g. namespace, repo name) clear GitLab's masking length requirement. The template decodes them into shell variables before use.
 
 **Permissions:**
 
-No special GitLab CI permissions required. Set `OCI_USERNAME` and `OCI_TOKEN` as masked CI variables under **Settings → CI/CD → Variables**.
+No special GitLab CI permissions required. Set the `OCI_*_64` values as masked CI variables under **Settings → CI/CD → Variables**.
 
 ---
 

@@ -18,12 +18,14 @@
 #       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
 #         when: on_success
 #
-# Required CI variables (set under Settings → CI/CD → Variables):
-#   OCI_REGISTRY    Hostname of the OCI registry (e.g. registry.example.com)
-#   OCI_NAMESPACE   Registry namespace / organisation
-#   OCI_REPO_NAME   Repository name for the image
-#   OCI_USERNAME    Registry login username
-#   OCI_TOKEN       Registry login password / token (mask this value)
+# Required CI variables (set under Settings → CI/CD → Variables, all base64-encoded
+# and masked — the `_64` suffix lets short values clear GitLab's masking length
+# requirement):
+#   OCI_REGISTRY_64    Hostname of the OCI registry (e.g. registry.example.com)
+#   OCI_NAMESPACE_64   Registry namespace / organisation
+#   OCI_REPO_NAME_64   Repository name for the image
+#   OCI_USERNAME_64    Registry login username
+#   OCI_TOKEN_64       Registry login password / token
 
 .docker-push:
   image: docker.io/library/docker:27
@@ -33,6 +35,12 @@
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_PLATFORM: "linux/arm64"
   before_script:
+    - |
+      OCI_USERNAME=$(printf '%s' "$OCI_USERNAME_64" | base64 -d)
+      OCI_TOKEN=$(printf '%s' "$OCI_TOKEN_64" | base64 -d)
+      OCI_REGISTRY=$(printf '%s' "$OCI_REGISTRY_64" | base64 -d)
+      OCI_NAMESPACE=$(printf '%s' "$OCI_NAMESPACE_64" | base64 -d)
+      OCI_REPO_NAME=$(printf '%s' "$OCI_REPO_NAME_64" | base64 -d)
     - docker login -u "$OCI_USERNAME" -p "$OCI_TOKEN" "$OCI_REGISTRY"
     - docker run --privileged --rm tonistiigi/binfmt --install all
   script:
