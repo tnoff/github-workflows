@@ -794,10 +794,13 @@ A `renovate.json` at the repo root controls which managers are enabled and any p
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `RENOVATE_TOKEN` | ✅ | GitLab PAT with `api` scope — used to open and update MRs |
+| `GITHUB_COM_TOKEN` | optional | GitHub PAT (no scopes needed beyond public read) — lets Renovate fetch release notes from github.com when updating dependencies whose source/changelog lives there. Without it, MR bodies show "Release Notes retrieval for this MR were skipped because no github.com credentials were available." |
 
 **Permissions:**
 
 Create a GitLab PAT with `api` scope and store it as a masked CI variable named `RENOVATE_TOKEN` under **Settings → CI/CD → Variables**. Then create a schedule under **Settings → CI/CD → Schedules** (e.g. `0 3 * * 1` for Monday at 3am).
+
+For release notes from public GitHub repos, also create a GitHub PAT (Personal access tokens (classic) → no scopes needed; or fine-grained with public repo read), store it as a masked CI variable named `GITHUB_COM_TOKEN`, and Renovate will pick it up automatically.
 
 ---
 
@@ -805,7 +808,9 @@ Create a GitLab PAT with `api` scope and store it as a masked CI variable named 
 
 Auto-bumps the patch version on a branch by comparing the `VERSION` file against the default branch. If they match (not yet bumped), increments the patch version, commits, and pushes back to the source branch. Idempotent — exits cleanly if already bumped, preventing push loops.
 
-Requires CI job token push access (**Settings → CI/CD → Token Access**) or `GITLAB_PUSH_TOKEN` (deploy/PAT token with `write_repository` scope).
+Authenticates the push using `GITLAB_PUSH_TOKEN` (GitLab PAT, project access token, or deploy token with `write_repository` scope) when set, otherwise falls back to `CI_JOB_TOKEN` with CI job token push access enabled under **Settings → CI/CD → Token Access**.
+
+**Recommended: set `GITLAB_PUSH_TOKEN`.** Pushes authored with `CI_JOB_TOKEN` do not trigger a follow-up pipeline (GitLab's infinite-loop guard), so the MR head advances past the latest pipeline's SHA and the MR widget reports `ci_must_pass` with no pipeline to show. A PAT-authored push triggers a fresh pipeline on the bump commit and keeps the MR widget green.
 
 ```yaml
 # In your app repository's .gitlab-ci.yml

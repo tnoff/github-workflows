@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.38] - 2026-05-06
+
+### Changed
+
+- `gitlab/bump-version.yml`: when `GITLAB_PUSH_TOKEN` is set, the auth URL now uses `oauth2:<token>` as the basic-auth pair instead of the literal `deploy-token:<token>`. `oauth2:` is the canonical username for personal access tokens, project access tokens, and deploy tokens — the previous form only authenticated correctly for deploy tokens whose username happened to be literally `deploy-token`. The fallback to `gitlab-ci-token:$CI_JOB_TOKEN` is unchanged, but now emits a stderr warning since `CI_JOB_TOKEN`-authored pushes don't trigger a follow-up pipeline (GitLab's infinite-loop guard) and leave the MR widget reporting `ci_must_pass` on the bump commit, while a PAT-authored push triggers a fresh pipeline and keeps the widget green. Doc header and README rewritten to call out the trade-off and recommend `GITLAB_PUSH_TOKEN`.
+
+### Added
+
+- `gitlab/renovate.yml`: new optional `GITHUB_COM_TOKEN` pass-through. When set as a CI variable (any GitHub PAT — no scopes needed beyond public-repo reads), Renovate uses it to fetch release notes from github.com for dependencies whose source/changelog lives there. Without it, MR bodies show "Release Notes retrieval for this MR were skipped because no github.com credentials were available." See [renovate self-hosting docs](https://github.com/renovatebot/renovate/blob/main/docs/usage/examples/self-hosting.md#githubcom-token-for-release-notes).
+
 ## [0.0.37] - 2026-05-05
 
 ### Changed

@@ -8,8 +8,16 @@
 # (e.g. package.json with a "version" key). For JSON the file is rewritten with
 # jq, preserving key order and using 2-space indentation.
 #
-# Requires "CI job token" push access under Settings → CI/CD → Token Access,
-# or set GITLAB_PUSH_TOKEN to a deploy/PAT token with write_repository scope.
+# Authenticates the push using GITLAB_PUSH_TOKEN (GitLab PAT, project access
+# token, or deploy token with write_repository scope) when set, otherwise falls
+# back to CI_JOB_TOKEN with "CI job token" push access enabled under Settings →
+# CI/CD → Token Access.
+#
+# Recommended: set GITLAB_PUSH_TOKEN. Pushes authored with CI_JOB_TOKEN do not
+# trigger a follow-up pipeline (GitLab's infinite-loop guard), so the MR head
+# advances past the latest pipeline's SHA and the MR widget reports
+# "ci_must_pass" with no pipeline to show. A PAT-authored push triggers a fresh
+# pipeline on the bump commit and keeps the MR widget green.
 #
 # Usage in consumer repo's .gitlab-ci.yml:
 #
@@ -77,8 +85,11 @@
       git config user.email "ci@gitlab"
       git config user.name "GitLab CI"
       if [ -n "$GITLAB_PUSH_TOKEN" ]; then
-        git remote set-url origin "https://deploy-token:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+        git remote set-url origin "https://oauth2:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
       else
+        echo "warning: GITLAB_PUSH_TOKEN not set — pushing with CI_JOB_TOKEN," >&2
+        echo "  which does not trigger a follow-up pipeline. The MR will" >&2
+        echo "  report ci_must_pass on the bump commit." >&2
         git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
       fi
       git add "${VERSION_FILE}"
