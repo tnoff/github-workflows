@@ -42,6 +42,12 @@
 #   COMPARE_BRANCH      Branch to compare against (default: $CI_DEFAULT_BRANCH, falls back to "main")
 
 .bump-version:
+  # Run in GitLab's built-in `.pre` stage so the bump happens before any
+  # consumer-defined stages (validate, test, build, ...). When a bump is
+  # needed, the resulting push triggers a fresh pipeline on the new SHA;
+  # running first means the current pipeline doesn't burn time on stale
+  # validation/tests before the bump fires.
+  stage: .pre
   image: docker.io/library/alpine:3
   variables:
     GIT_DEPTH: 0

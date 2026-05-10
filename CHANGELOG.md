@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.39] - 2026-05-09
+
+### Changed
+
+- `gitlab/bump-version.yml`: template now sets `stage: .pre` so the bump runs before any consumer-defined stages (validate, test, build, ...). Previously the job inherited GitLab's default `test` stage and consumers' `validate` jobs ran first, burning CI time on a SHA that was about to be superseded by the bump push. Consumers that previously set an explicit `stage:` override on their `bump-version` job can now drop it.
+- `gitlab/discord-notify.yml`: webhook failures are now non-fatal — the script logs the error to stderr and exits 0 instead of failing the job. Adds a 10s `urlopen` timeout and catches `URLError` (DNS/network) and unexpected exceptions in addition to `HTTPError`. Notifications are advisory; a Discord outage or webhook misconfiguration should not break the pipeline.
+
 ## [0.0.38] - 2026-05-06
 
 ### Changed

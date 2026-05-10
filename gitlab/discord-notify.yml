@@ -120,11 +120,19 @@
           },
           method="POST",
       )
+      # Discord outages or webhook misconfiguration must not break the
+      # pipeline — notifications are advisory. Log and exit 0.
       try:
-          urllib.request.urlopen(req)
+          urllib.request.urlopen(req, timeout=10)
           print("Discord notification sent")
       except urllib.error.HTTPError as e:
           print(f"Failed to send Discord notification: {e.code} {e.reason}", file=sys.stderr)
-          print(f"Response: {e.read().decode()}", file=sys.stderr)
-          sys.exit(1)
+          try:
+              print(f"Response: {e.read().decode()}", file=sys.stderr)
+          except Exception:
+              pass
+      except urllib.error.URLError as e:
+          print(f"Failed to send Discord notification (network error): {e.reason}", file=sys.stderr)
+      except Exception as e:
+          print(f"Failed to send Discord notification: {e}", file=sys.stderr)
       PYEOF
