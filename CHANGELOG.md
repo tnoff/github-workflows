@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.41] - 2026-05-10
+
+### Added
+
+- `gitlab/bump-version.yml`: new optional `BUMP_CHANGELOG` variable. When set to `"true"`, the template also prepends a new `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG_FILE` (default `CHANGELOG.md`) and stages it as part of the bump commit. Entry text is parsed from the MR title when it matches renovate's `<type>(deps): update dependency <name> to <version>` pattern (e.g. `Bumped tox to v4.53.1`); otherwise the MR title is used verbatim. Idempotent — if a section for the new version already exists, the changelog is left untouched.
+
 ## [0.0.40] - 2026-05-10
 
 ### Added

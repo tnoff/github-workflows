@@ -902,6 +902,26 @@ bump-version:
 | `VERSION_FILE_TYPE` | `plain` | `plain` (raw text) or `json` |
 | `VERSION_JSON_KEY` | `version` | Key holding the version when `VERSION_FILE_TYPE` is `json` |
 | `COMPARE_BRANCH` | `$CI_DEFAULT_BRANCH` / `main` | Branch to compare against |
+| `BUMP_CHANGELOG` | `""` | Set to `"true"` to also prepend a new section to `CHANGELOG_FILE` and stage it as part of the bump commit. |
+| `CHANGELOG_FILE` | `CHANGELOG.md` | Path to the changelog. Only used when `BUMP_CHANGELOG` is `"true"`. |
+
+**Changelog updates:**
+
+When `BUMP_CHANGELOG=true`, the template prepends a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG_FILE` immediately before the first existing version heading (or at the end of the file if none exist). The entry under `### Changed` is built from the MR title:
+
+- If the title matches renovate's `<type>(deps): update dependency <name> to <version>` pattern (e.g. `fix(deps): update dependency tox to v4.53.1`), it becomes `Bumped tox to v4.53.1`.
+- Otherwise, the MR title is used verbatim.
+
+The update is idempotent — if a section for the new version already exists in the file, the changelog is left untouched.
+
+```yaml
+bump-version:
+  extends: .bump-version
+  variables:
+    BUMP_CHANGELOG: 'true'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\//
+```
 
 ---
 
