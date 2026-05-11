@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.40] - 2026-05-10
+
+### Added
+
+- `gitlab/release.yml`: new reusable template that creates a GitLab Release matching the tag pushed by `gitlab/tag.yml`. Reads `VERSION` and `TAG_CREATED` from `.tag`'s dotenv artifact via `needs: artifacts: true`, so it no-ops when the tag already existed instead of creating a duplicate release. Pulls the `## [X.Y.Z]` section out of `CHANGELOG.md` (Keep-a-Changelog format) for the release description; falls back to `"Release <version>"` when no matching section is found. `CHANGELOG_FILE` is configurable. Image pinned to `registry.gitlab.com/gitlab-org/release-cli:v0.24.0`.
+
 ## [0.0.39] - 2026-05-09
 
 ### Changed

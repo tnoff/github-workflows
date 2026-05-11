@@ -1,0 +1,75 @@
+# Reusable GitLab CI template for creating a GitLab Release that matches the
+# tag produced by /gitlab/tag.yml.
+#
+# Pulls release notes for the version out of a Keep-a-Changelog formatted
+# CHANGELOG file (sections headed `## [X.Y.Z] - YYYY-MM-DD`). If no matching
+# section is found, falls back to a generic "Release <version>" description.
+#
+# Reads VERSION and TAG_CREATED from the dotenv artifact emitted by .tag, so
+# this job must `needs:` the tag job with `artifacts: true`. When
+# TAG_CREATED != "true" (tag already existed, nothing was pushed) the job
+# exits cleanly without invoking release-cli.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/release.yml'
+#
+#   release:
+#     extends: .release
+#     stage: release
+#     needs:
+#       - job: tag-build
+#         artifacts: true
+#     rules:
+#       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+#
+# Optional variables:
+#   CHANGELOG_FILE   Path to the changelog (default: CHANGELOG.md)
+
+.release:
+  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
+  variables:
+    CHANGELOG_FILE: "CHANGELOG.md"
+  script:
+    - |
+      if [ "$TAG_CREATED" != "true" ]; then
+        echo "TAG_CREATED=${TAG_CREATED:-<unset>} — no new tag, skipping release."
+        exit 0
+      fi
+
+      if [ -z "$VERSION" ]; then
+        echo "VERSION is unset — cannot create release. Did the tag job emit build.env?" >&2
+        exit 1
+      fi
+
+      RAW_VERSION="${VERSION#v}"
+      NOTES=""
+      if [ -f "$CHANGELOG_FILE" ]; then
+        # Capture lines after `## [RAW_VERSION]` up to the next `## [` heading.
+        NOTES=$(awk -v ver="$RAW_VERSION" '
+          $0 ~ "^## \\[" ver "\\]" { found=1; next }
+          found && /^## \[/ { exit }
+          found { print }
+        ' "$CHANGELOG_FILE" | sed '/./,$!d')
+      else
+        echo "$CHANGELOG_FILE not found — using generic description."
+      fi
+
+      if [ -z "$NOTES" ]; then
+        echo "No changelog entry for $RAW_VERSION — using generic description."
+        NOTES="Release $VERSION"
+      fi
+
+      echo "Release notes for $VERSION:"
+      echo "----"
+      echo "$NOTES"
+      echo "----"
+
+      release-cli create \
+        --name "Release $VERSION" \
+        --tag-name "$VERSION" \
+        --ref "$CI_COMMIT_SHA" \
+        --description "$NOTES"

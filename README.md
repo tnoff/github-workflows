@@ -22,6 +22,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 **GitLab CI (`/gitlab/`)**
 
 - [gitlab/tag.yml](#gitlabtagyml) — Auto-create Git tags from a version file
+- [gitlab/release.yml](#gitlabreleaseyml) — Create a GitLab Release for a tag with notes pulled from `CHANGELOG.md`
 - [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
 - [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
 - [gitlab/bump-version.yml](#gitlabbump-versionyml) — Auto-bump patch version on a branch
@@ -702,6 +703,61 @@ tag-build:
 | `VERSION` | Version from file with `v` prefix (e.g., `v0.0.4`) |
 | `TAG_CREATED` | `true` if a new tag was created, `false` if skipped |
 | `TAG_EXISTS` | `true` if the tag already existed |
+
+### `gitlab/release.yml`
+
+Creates a GitLab Release matching the tag pushed by [`gitlab/tag.yml`](#gitlabtagyml). Reads `VERSION` and `TAG_CREATED` from `.tag`'s dotenv artifact via `needs: artifacts: true`, so it no-ops when the tag already existed instead of creating a duplicate release.
+
+The release description is built from a Keep-a-Changelog formatted `CHANGELOG.md` — the template extracts everything between the `## [X.Y.Z]` heading for the version being released and the next `## [` heading. If no matching section is found, falls back to `"Release <version>"`.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/tag.yml'
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/release.yml'
+
+stages:
+  - tag
+  - release
+
+tag-build:
+  extends: .tag
+  stage: tag
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      when: on_success
+
+release:
+  extends: .release
+  stage: release
+  needs:
+    - job: tag-build
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      when: on_success
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHANGELOG_FILE` | `CHANGELOG.md` | Path to the changelog. Sections must be headed `## [X.Y.Z] - YYYY-MM-DD`. |
+
+**Inputs (from the upstream `.tag` job's `dotenv` artifact):**
+
+| Variable | Description |
+|----------|-------------|
+| `VERSION` | Tag name with `v` prefix (e.g. `v1.2.3`) — used as `--tag-name` and in the release title |
+| `TAG_CREATED` | `true` if a new tag was pushed; any other value skips the release |
+
+**Permissions:**
+
+The release job uses the GitLab Releases API, which is accessible to the built-in `CI_JOB_TOKEN` — no extra variables or tokens required.
 
 ### `gitlab/discord-notify.yml`
 
