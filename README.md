@@ -752,7 +752,7 @@ release:
 
 | Variable | Description |
 |----------|-------------|
-| `VERSION` | Tag name with `v` prefix (e.g. `v1.2.3`) — used as `--tag-name` and in the release title |
+| `VERSION` | Tag name with `v` prefix (e.g. `v1.2.3`) — used as the release's `tag_name` and in the release title |
 | `TAG_CREATED` | `true` if a new tag was pushed; any other value skips the release |
 
 **Permissions:**

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.42] - 2026-05-10
+
+### Changed
+
+- `gitlab/release.yml`: dropped the `registry.gitlab.com/gitlab-org/release-cli:v0.24.0` image and now runs on `docker.io/library/alpine:3` with `curl` and `jq` installed in `before_script`. Calls the Releases API directly (`POST /projects/:id/releases`) authenticated with `CI_JOB_TOKEN`. Self-hosted runners that hadn't preheated the release-cli image were hitting `prepare environment: timed out waiting for pod to start` because the registry.gitlab.com pull exceeded the runner's `poll_timeout`; the alpine image is small enough to pull within the default and is already cached on most runners. Behaviour is otherwise unchanged: same CHANGELOG-section extraction, same fallback description, same idempotency on `TAG_CREATED`.
+
 ## [0.0.41] - 2026-05-10
 
 ### Added

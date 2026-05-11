@@ -8,7 +8,13 @@
 # Reads VERSION and TAG_CREATED from the dotenv artifact emitted by .tag, so
 # this job must `needs:` the tag job with `artifacts: true`. When
 # TAG_CREATED != "true" (tag already existed, nothing was pushed) the job
-# exits cleanly without invoking release-cli.
+# exits cleanly without calling the Releases API.
+#
+# Calls the GitLab Releases API directly (POST /projects/:id/releases) via
+# curl, authenticated with the built-in CI_JOB_TOKEN. Runs on a cached
+# `docker.io/library/alpine:3` image — no release-cli binary required, and
+# no registry.gitlab.com pull, so it works on runners that don't preheat
+# the release-cli image.
 #
 # Usage in consumer repo's .gitlab-ci.yml:
 #
@@ -30,9 +36,11 @@
 #   CHANGELOG_FILE   Path to the changelog (default: CHANGELOG.md)
 
 .release:
-  image: registry.gitlab.com/gitlab-org/release-cli:v0.24.0
+  image: docker.io/library/alpine:3
   variables:
     CHANGELOG_FILE: "CHANGELOG.md"
+  before_script:
+    - apk add --no-cache curl jq
   script:
     - |
       if [ "$TAG_CREATED" != "true" ]; then
@@ -68,8 +76,25 @@
       echo "$NOTES"
       echo "----"
 
-      release-cli create \
-        --name "Release $VERSION" \
-        --tag-name "$VERSION" \
-        --ref "$CI_COMMIT_SHA" \
-        --description "$NOTES"
+      PAYLOAD=$(jq -n \
+        --arg name "Release $VERSION" \
+        --arg tag "$VERSION" \
+        --arg ref "$CI_COMMIT_SHA" \
+        --arg description "$NOTES" \
+        '{name: $name, tag_name: $tag, ref: $ref, description: $description}')
+
+      HTTP_CODE=$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+        -X POST \
+        -H 'Content-Type: application/json' \
+        -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+        -d "$PAYLOAD" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases")
+
+      if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+        echo "Release created for $VERSION"
+        cat /tmp/response.json
+      else
+        echo "Failed to create release: HTTP $HTTP_CODE" >&2
+        cat /tmp/response.json >&2
+        exit 1
+      fi
