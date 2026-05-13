@@ -29,6 +29,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [gitlab/docker-push.yml](#gitlabdocker-pushyml) — Build and push a multi-arch Docker image
 - [gitlab/trufflehog.yml](#gitlabtrufflehogyml) — Scan the repo for leaked secrets with TruffleHog
 - [gitlab/trufflehog-image.yml](#gitlabtrufflehog-imageyml) — Scan a built Docker image for leaked secrets with TruffleHog
+- [gitlab/trigger-bump.yml](#gitlabtrigger-bumpyml) — Fire a cross-project pipeline trigger on a downstream repo after pushing a new image
 
 ## Available Workflows
 
@@ -1076,6 +1077,61 @@ trufflehog-image:
 No registry credentials required — the scan job neither pulls nor pushes. The upstream build job that produces the tarball is what needs Docker-in-Docker; the scan job itself does not.
 
 > **Note:** This template installs TruffleHog by piping the upstream `install.sh` from `raw.githubusercontent.com` at job time. Pin `TRUFFLEHOG_VERSION` if your security policy disallows running unpinned upstream scripts.
+
+---
+
+### `gitlab/trigger-bump.yml`
+
+Producer side of the cross-project image-pin bump flow. After this repo's CI pushes a new image, this job `curl`s the GitLab pipeline trigger endpoint on a downstream repo (e.g. docker-apps) with `BUMP_SOURCE` / `IMAGE_NAME` / `IMAGE_TAG` as `variables[...]`. The downstream pipeline runs its own `bump-image-pin` job which rewrites the pin in the relevant manifest and opens an MR.
+
+Requires the upstream `docker-push` job to emit `IMAGE=<full image ref>` to a dotenv artifact (`build.env`); the trigger job consumes that via `needs: artifacts: true`.
+
+```yaml
+# In your app repository's .gitlab-ci.yml
+include:
+  - project: 'org/ci-workflows'
+    ref: main
+    file: '/gitlab/trigger-bump.yml'
+
+docker-push:
+  # ... your existing build job ...
+  script:
+    - IMAGE="$OCI_REGISTRY/$OCI_NAMESPACE/$OCI_REPO_NAME"
+    - echo "IMAGE=$IMAGE" >> build.env
+    # ... rest of build ...
+  artifacts:
+    reports:
+      dotenv: build.env
+
+trigger-bump-docker-apps:
+  extends: .trigger-bump
+  needs:
+    - job: docker-push
+      artifacts: true
+  variables:
+    BUMP_SOURCE: 'my-repo-name'
+```
+
+Override `stage:` if your pipeline doesn't have a `build` stage (e.g. set `stage: tag` on repos that go `validate → test → tag → notify`). Override `rules:` if the trigger should fire under different conditions than `default-branch-and-not-schedule`.
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUMP_SOURCE` | *(required)* | Identifier for this producer repo. The downstream repo's `bump-image-pin` job gates on this value (typically `$CI_PIPELINE_SOURCE == "trigger" && $BUMP_SOURCE == "my-repo-name"`). |
+| `TARGET_PROJECT_ID` | `$DOCKER_APPS_PROJECT_ID` | Numeric project ID of the downstream repo. The default reads from a CI variable named `DOCKER_APPS_PROJECT_ID` (typically provisioned via terraform). |
+| `TARGET_TRIGGER_TOKEN` | `$DOCKER_APPS_TRIGGER_TOKEN` | Pipeline trigger token on the downstream repo. The default reads from `DOCKER_APPS_TRIGGER_TOKEN` (also typically terraform-provisioned). |
+| `TARGET_REF` | `main` | Branch/tag on the downstream repo to trigger against. |
+
+**Defaults:**
+
+- `stage: build`
+- `rules:` fires on default-branch pushes (non-schedule)
+- `allow_failure: true` — the image is already pushed by the time the trigger fires, so a downstream automation hiccup (registry unreachable, trigger token rotated, etc.) shouldn't fail the producer pipeline.
+
+**Permissions:**
+
+The downstream repo must have a pipeline trigger token created (terraform-managed via `gitlab_pipeline_trigger`) and `ci_pipeline_variables_minimum_override_role` set to at least `developer` so the trigger token can pass `variables[...]`.
 
 ---
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.43] - 2026-05-12
+
+### Added
+
+- `gitlab/trigger-bump.yml`: new reusable template exposing `.trigger-bump` for the *producer* side of the cross-project bump-pin flow. Fires `POST /projects/:id/trigger/pipeline` on a downstream repo (e.g. docker-apps) with `BUMP_SOURCE` / `IMAGE_NAME` / `IMAGE_TAG` as `variables[...]` so the downstream pipeline can rewrite the image pin and open an MR. Defaults `TARGET_PROJECT_ID` / `TARGET_TRIGGER_TOKEN` to `$DOCKER_APPS_PROJECT_ID` / `$DOCKER_APPS_TRIGGER_TOKEN` (the names terraform already provisions), so consumers usually only need to set `BUMP_SOURCE` and wire `needs:` to their `docker-push` job (which must emit `IMAGE` to a dotenv artifact). `allow_failure: true` by default — the image is already pushed by the time the trigger fires, so a downstream automation hiccup shouldn't fail the producer pipeline.
+
 ## [0.0.42] - 2026-05-10
 
 ### Changed
