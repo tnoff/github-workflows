@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.44] - 2026-06-01
+
+### Added
+
+- `gitlab/buildkit-docker-push.yml`: new reusable template exposing `.buildkit-docker-push` for building OCI images with buildkit (out-of-cluster via `buildctl --addr`, no dind) and pushing `:SHA` and `:latest` tags to OCIR. Emits `IMAGE=<full ref>` to a dotenv artifact so downstream jobs (e.g. `.trigger-bump`) can pick up the reference without re-decoding the `OCI_*_64` CI variables. Same auth mechanism as the removed `.docker-push` (base64-encoded `OCI_USERNAME_64`/`OCI_TOKEN_64`/`OCI_REGISTRY_64`/`OCI_NAMESPACE_64`/`OCI_REPO_NAME_64`). Supports multi-image consumers by overriding `OCI_REPO_NAME_64` per job, plus `DOCKERFILE_NAME` / `DOCKERFILE_DIR` / `CONTEXT_DIR` / `BUILD_ARGS` / `PLATFORM` for build customization. Consolidates the inline buildkit jobs that were copy-pasted across all six in-tree producer repos.
+
+### Removed
+
+- `gitlab/docker-push.yml` (`.docker-push`): removed. The dind-based template had zero in-tree consumers — every producer was running its own inline buildkit-via-cluster-service job that `.buildkit-docker-push` now consolidates. **Breaking** for any external consumer still extending `.docker-push`; migrate to `.buildkit-docker-push` (which expects an out-of-cluster `buildkitd` Deployment rather than dind).
+
 ## [0.0.43] - 2026-05-12
 
 ### Added

@@ -1,0 +1,115 @@
+# Reusable GitLab CI template that builds an OCI image with buildkit and
+# pushes :SHA and :latest tags to OCIR. Emits IMAGE=<full ref> to a dotenv
+# artifact so downstream jobs (e.g. .trigger-bump) can pick up the
+# reference without re-decoding the OCI_*_64 CI variables.
+#
+# Replaces the dind-based gitlab/docker-push.yml (removed in 0.0.44),
+# which had zero consumers — all six in-tree producers were running their
+# own inline buildkit-via-cluster-service jobs that this template
+# consolidates.
+#
+# Buildkit runs out-of-cluster against a long-running buildkitd Deployment
+# (avoiding dind), so the consumer's runner does not need privileged mode.
+# Override BUILDKIT_ADDR for non-default deployments.
+#
+# Authentication uses base64-encoded CI variables (mirrors the convention
+# introduced for the old .docker-push in 0.0.37). Required CI variables on
+# the consumer project — GitLab's masking length requirement rejects short
+# values when stored as plaintext, so base64 keeps everything masked:
+#   OCI_USERNAME_64, OCI_TOKEN_64, OCI_REGISTRY_64, OCI_NAMESPACE_64,
+#   OCI_REPO_NAME_64
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/buildkit-docker-push.yml'
+#
+#   docker-push:
+#     extends: .buildkit-docker-push
+#
+# For repos that build multiple images (e.g. a bot + a dispatcher), define
+# one job per image and override OCI_REPO_NAME_64 to the project's
+# per-image CI variable:
+#
+#   docker-push-dispatcher:
+#     extends: .buildkit-docker-push
+#     variables:
+#       DOCKERFILE_NAME: Dockerfile.dispatcher
+#       OCI_REPO_NAME_64: $OCI_DISPATCHER_REPO_NAME_64
+#
+# Optional variables (defaults shown):
+#   BUILDKIT_IMAGE      docker.io/moby/buildkit:v0.30.0
+#   BUILDKIT_ADDR       tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+#   CONTEXT_DIR         .            buildctl --local context=
+#   DOCKERFILE_DIR      .            buildctl --local dockerfile=
+#   DOCKERFILE_NAME     Dockerfile   buildctl --opt filename=
+#   BUILD_ARGS          (empty)      Extra buildctl flags, space-separated.
+#                                     Example: '--opt build-arg:DB_TYPE=sqlite'
+#   PLATFORM            linux/arm64
+#
+# Override `stage:` / `rules:` per consumer as needed (default `stage: build`
+# and pushes only on the default branch).
+
+.buildkit-docker-push:
+  stage: build
+  image: $BUILDKIT_IMAGE
+  needs: []
+  variables:
+    BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.30.0
+    BUILDKIT_ADDR: tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+    CONTEXT_DIR: .
+    DOCKERFILE_DIR: .
+    DOCKERFILE_NAME: Dockerfile
+    BUILD_ARGS: ''
+    PLATFORM: linux/arm64
+    DOCKER_CONFIG: /tmp/.docker
+  before_script:
+    - mkdir -p "$DOCKER_CONFIG"
+    - |
+      err() { echo "$1" >&2; exit 1; }
+      [ -n "$OCI_USERNAME_64" ]  || err "OCI_USERNAME_64 not set"
+      [ -n "$OCI_TOKEN_64" ]     || err "OCI_TOKEN_64 not set"
+      [ -n "$OCI_REGISTRY_64" ]  || err "OCI_REGISTRY_64 not set"
+      [ -n "$OCI_NAMESPACE_64" ] || err "OCI_NAMESPACE_64 not set"
+      [ -n "$OCI_REPO_NAME_64" ] || err "OCI_REPO_NAME_64 not set"
+
+      OCI_USERNAME=$(printf '%s' "$OCI_USERNAME_64" | base64 -d)
+      OCI_TOKEN=$(printf '%s' "$OCI_TOKEN_64" | base64 -d)
+      OCI_REGISTRY=$(printf '%s' "$OCI_REGISTRY_64" | base64 -d)
+      OCI_NAMESPACE=$(printf '%s' "$OCI_NAMESPACE_64" | base64 -d)
+      OCI_REPO_NAME=$(printf '%s' "$OCI_REPO_NAME_64" | base64 -d)
+
+      AUTH=$(printf '%s:%s' "$OCI_USERNAME" "$OCI_TOKEN" | base64 | tr -d '\n')
+      cat > "$DOCKER_CONFIG/config.json" <<EOF
+      {"auths":{"$OCI_REGISTRY":{"auth":"$AUTH"}}}
+      EOF
+
+      IMAGE="$OCI_REGISTRY/$OCI_NAMESPACE/$OCI_REPO_NAME"
+      # Emit IMAGE for downstream jobs (e.g. .trigger-bump) that need the
+      # full image reference without re-decoding the OCI_*_64 vars.
+      echo "IMAGE=$IMAGE" >> build.env
+  script:
+    - |
+      buildctl --addr "$BUILDKIT_ADDR" build \
+        --frontend dockerfile.v0 \
+        --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
+        --opt filename="$DOCKERFILE_NAME" \
+        --opt platform="$PLATFORM" \
+        $BUILD_ARGS \
+        --output type=image,name="$IMAGE":"$CI_COMMIT_SHORT_SHA",push=true
+    - |
+      buildctl --addr "$BUILDKIT_ADDR" build \
+        --frontend dockerfile.v0 \
+        --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
+        --opt filename="$DOCKERFILE_NAME" \
+        --opt platform="$PLATFORM" \
+        $BUILD_ARGS \
+        --output type=image,name="$IMAGE":latest,push=true
+  artifacts:
+    reports:
+      dotenv: build.env
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+      when: on_success
