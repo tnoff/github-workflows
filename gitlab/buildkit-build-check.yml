@@ -1,0 +1,81 @@
+# Reusable GitLab CI template for MR-time "does the Dockerfile compile"
+# validation. Builds a local image with buildkit and emits a docker-save
+# tarball that downstream MR jobs (e.g. .trufflehog-image from 0.0.36) can
+# scan without rebuilding.
+#
+# No push. No registry credentials. Same buildkit-via-cluster-service
+# transport as .buildkit-docker-push — runs on a long-lived buildkitd
+# Deployment, no dind.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/buildkit-build-check.yml'
+#
+#   build-check:
+#     extends: .buildkit-build-check
+#
+#   trufflehog-image:
+#     extends: .trufflehog-image
+#     stage: validate
+#     needs: [build-check]
+#     variables:
+#       TRUFFLEHOG_IMAGE_TARBALL: image.tar
+#
+# For repos that build multiple images (e.g. discord-bot's bot + dispatcher),
+# define one job per Dockerfile and override per-variant inputs:
+#
+#   build-check-dispatcher:
+#     extends: .buildkit-build-check
+#     variables:
+#       DOCKERFILE_NAME: Dockerfile.dispatcher
+#       OUTPUT_NAME: discord-dispatcher:ci
+#       OUTPUT_TARBALL: image-dispatcher.tar
+#
+# Optional variables (defaults shown):
+#   BUILDKIT_IMAGE      docker.io/moby/buildkit:v0.30.0
+#   BUILDKIT_ADDR       tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+#   CONTEXT_DIR         .              buildctl --local context=
+#   DOCKERFILE_DIR      .              buildctl --local dockerfile=
+#   DOCKERFILE_NAME     Dockerfile     buildctl --opt filename=
+#   BUILD_ARGS          (empty)        Extra buildctl flags, space-separated.
+#                                       Example: '--opt build-arg:DB_TYPE=sqlite'
+#   OUTPUT_NAME         $CI_PROJECT_NAME:ci  Local image tag
+#   OUTPUT_TARBALL      image.tar      docker-save tarball path; published as
+#                                       an artifact with 1-day expiry
+#
+# Default rules: runs on every MR; fork-MRs require a maintainer to click
+# `manual` (prevents untrusted code from running CI automatically).
+# Override `stage:` / `rules:` per consumer as needed.
+
+.buildkit-build-check:
+  stage: validate
+  image: $BUILDKIT_IMAGE
+  variables:
+    BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.30.0
+    BUILDKIT_ADDR: tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+    CONTEXT_DIR: .
+    DOCKERFILE_DIR: .
+    DOCKERFILE_NAME: Dockerfile
+    BUILD_ARGS: ''
+    OUTPUT_NAME: $CI_PROJECT_NAME:ci
+    OUTPUT_TARBALL: image.tar
+  script:
+    - |
+      buildctl --addr "$BUILDKIT_ADDR" build \
+        --frontend dockerfile.v0 \
+        --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
+        --opt filename="$DOCKERFILE_NAME" \
+        $BUILD_ARGS \
+        --output type=docker,name="$OUTPUT_NAME",dest="$OUTPUT_TARBALL"
+  artifacts:
+    paths:
+      - $OUTPUT_TARBALL
+    expire_in: 1 day
+  rules:
+    # Fork MRs require a project member to manually trigger jobs — prevents untrusted code from running CI automatically
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

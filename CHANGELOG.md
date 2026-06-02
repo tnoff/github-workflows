@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.45] - 2026-06-01
+
+### Added
+
+- `gitlab/buildkit-build-check.yml`: new reusable template exposing `.buildkit-build-check` for MR-time "does the Dockerfile compile" validation. Builds a local image with buildkit (out-of-cluster, no dind) and emits a `docker save` tarball as an artifact so downstream MR jobs (e.g. `.trufflehog-image`) can scan without rebuilding. Same buildkit-via-cluster-service transport as `.buildkit-docker-push` (0.0.44). Inputs: `BUILDKIT_IMAGE` (centralizes the `v0.29.0`/`v0.30.0` drift that had crept into individual repos), `CONTEXT_DIR` / `DOCKERFILE_DIR` / `DOCKERFILE_NAME` / `BUILD_ARGS` / `OUTPUT_NAME` / `OUTPUT_TARBALL`. Default `rules:` runs on every MR with fork-MRs requiring a maintainer to manually trigger. Consolidates the `build-check` / `docker-build` / `validate-docker` jobs that were copy-pasted across eight in-tree consumers.
+
 ## [0.0.44] - 2026-06-01
 
 ### Added
