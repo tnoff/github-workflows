@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.47] - 2026-06-01
+
+### Added
+
+- `gitlab/spellcheck.yml`: new reusable template exposing `.spellcheck` for running pyspelling against a project's spellcheck config. Inputs: `SPELLCHECK_NAME` (default `Markdown`; consumers using HTML sites override to `html`), `SPELLCHECK_CONFIG` (default `.spellcheck/spellcheck.yml`). Consolidates the inline pyspelling jobs across four in-tree consumers (`dappertable`, `enheduanna`, `eastbay`, `personal-website`).
+
 ## [0.0.46] - 2026-06-01
 
 ### Added

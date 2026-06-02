@@ -1,0 +1,42 @@
+# Reusable GitLab CI template that runs pyspelling against a project's
+# spellcheck config.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/spellcheck.yml'
+#
+#   spellcheck:
+#     extends: .spellcheck
+#     variables:
+#       SPELLCHECK_NAME: html        # or 'Markdown', etc.
+#
+# The consumer must commit a pyspelling config at SPELLCHECK_CONFIG
+# (default `.spellcheck/spellcheck.yml`) that defines the named matrix
+# entry passed via SPELLCHECK_NAME.
+#
+# Optional variables (defaults shown):
+#   SPELLCHECK_NAME       Markdown                  pyspelling --name
+#   SPELLCHECK_CONFIG     .spellcheck/spellcheck.yml pyspelling -c
+#
+# Default rules: runs on every MR; fork-MRs require a maintainer to click
+# `manual`. Override `stage:` / `rules:` per consumer.
+
+.spellcheck:
+  stage: validate
+  image: docker.io/library/python:3.14-slim
+  variables:
+    SPELLCHECK_NAME: Markdown
+    SPELLCHECK_CONFIG: .spellcheck/spellcheck.yml
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq aspell aspell-en
+    - pip install pyspelling
+  script:
+    - pyspelling -c "$SPELLCHECK_CONFIG" --name "$SPELLCHECK_NAME"
+  rules:
+    # Fork MRs require a project member to manually trigger jobs — prevents untrusted code from running CI automatically
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
