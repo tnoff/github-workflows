@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.46] - 2026-06-01
+
+### Added
+
+- `gitlab/tox-pipeline.yml`: new reusable templates exposing `.tox-generate` and `.tox-pipeline` for Python tox matrix testing plus a diff-cover coverage gate. GitLab CI doesn't accept YAML lists as job variables, so `.tox-generate` introspects `tox -l` and writes a child pipeline YAML that `.tox-pipeline` then triggers via `include: artifact:`. Inputs on `.tox-generate`: `TOX_EXTRA_APT` (appended after the default `git` so per-repo extras like discord-bot's `sqlite3 ffmpeg` don't lose `git`), `DIFF_COVER_FAIL_UNDER` (default 100), `DIFF_COVER_COMPARE_BRANCH` (default `origin/main`). The generated child pipeline always pins images as `docker.io/library/python:<X.Y>-slim` so the template works on runtimes that enforce CRI-O `short-name-mode = "enforcing"`. Consolidates the ~70-line copy-pasted heredoc generator across seven in-tree Python repos (`dappertable`, `backup-tool`, `enheduanna`, `hathor`, `public-transit`, `vault-app`, `oke-security-scanner`) plus discord-bot's older hand-rolled matrix.
+
 ## [0.0.45] - 2026-06-01
 
 ### Added

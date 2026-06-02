@@ -1,0 +1,151 @@
+# Reusable GitLab CI templates for running a Python tox test matrix plus
+# a diff-cover coverage gate against the target branch.
+#
+# GitLab CI doesn't support taking a YAML list as a job-level variable, so
+# the matrix is generated dynamically: `.tox-generate` introspects
+# `tox -l` and writes a child pipeline YAML; `.tox-pipeline` triggers
+# that child pipeline via `include: artifact:`.
+#
+# Consumer-side surface (the standard pair):
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/tox-pipeline.yml'
+#
+#   tox-generate:
+#     extends: .tox-generate
+#
+#   tox-pipeline:
+#     extends: .tox-pipeline
+#
+# The `tox-pipeline` job's `needs: [tox-generate]` is baked into the
+# template — the consumer's matching job MUST be named `tox-generate`.
+#
+# For Python tests with extra system dependencies (e.g. discord-bot needs
+# `sqlite3 ffmpeg`), set TOX_EXTRA_APT on the generate job. `git` is
+# always installed; the extras are appended.
+#
+#   tox-generate:
+#     extends: .tox-generate
+#     variables:
+#       TOX_EXTRA_APT: 'sqlite3 ffmpeg'
+#
+# Optional variables on `.tox-generate` (defaults shown):
+#   TOX_EXTRA_APT             (empty)        Extra apt packages for the tox
+#                                              child-pipeline job (appended
+#                                              after the default `git`).
+#   DIFF_COVER_FAIL_UNDER     100            Coverage threshold (percent).
+#   DIFF_COVER_COMPARE_BRANCH origin/main    Branch to diff against.
+#
+# Both jobs default to `rules:` that run on MR pipelines, with fork-MRs
+# requiring a maintainer to manually trigger. Override per consumer.
+
+.tox-generate:
+  stage: validate
+  image: docker.io/library/python:3.14-slim
+  variables:
+    TOX_EXTRA_APT: ''
+    DIFF_COVER_FAIL_UNDER: '100'
+    DIFF_COVER_COMPARE_BRANCH: 'origin/main'
+  before_script:
+    - pip install tox
+  script:
+    - |
+      python3 - <<'PYEOF'
+      import os, re, subprocess
+
+      result = subprocess.run(['tox', '-l'], capture_output=True, text=True, check=True)
+      versions = []
+      for env in result.stdout.strip().splitlines():
+          m = re.fullmatch(r'py(\d)(\d+)', env)
+          if m:
+              versions.append(f'{m.group(1)}.{m.group(2)}')
+
+      if not versions:
+          raise SystemExit(
+              'No py<X><Y> envs found via `tox -l`; the .tox-generate template '
+              'assumes a Python tox.ini with py3X-style envs.'
+          )
+
+      versions_yaml = '[' + ', '.join(f'"{v}"' for v in versions) + ']'
+      # Pick the highest Python version as the canonical coverage producer
+      # for diff-cover.
+      latest = max(versions, key=lambda v: tuple(int(p) for p in v.split('.')))
+
+      extra_apt = os.environ.get('TOX_EXTRA_APT', '').strip()
+      fail_under = os.environ.get('DIFF_COVER_FAIL_UNDER', '100')
+      compare_branch = os.environ.get('DIFF_COVER_COMPARE_BRANCH', 'origin/main')
+
+      tox_apt = ('git ' + extra_apt).strip()
+
+      lines = [
+          'stages:',
+          '  - test',
+          '  - coverage',
+          '',
+          'default:',
+          '  tags:',
+          '    - self-hosted',
+          '',
+          'tox:',
+          '  stage: test',
+          '  image: docker.io/library/python:${PYTHON_VERSION}-slim',
+          '  parallel:',
+          '    matrix:',
+          f'      - PYTHON_VERSION: {versions_yaml}',
+          '  before_script:',
+          f'    - apt-get update -qq && apt-get install -y -qq {tox_apt}',
+          '    - pip install tox',
+          '  script:',
+          "    - tox -e $(python3 -c \"import sys; v=sys.version_info; print(f'py{v.major}{v.minor}')\")",
+          '  artifacts:',
+          '    paths:',
+          '      - coverage.xml',
+          '    expire_in: 1 day',
+          '    when: always',
+          '  rules:',
+          '    - when: always',
+          '',
+          'diff-cover:',
+          '  stage: coverage',
+          f'  image: docker.io/library/python:{latest}-slim',
+          '  needs:',
+          f'    - job: "tox: [{latest}]"',
+          '      artifacts: true',
+          '  variables:',
+          '    GIT_DEPTH: "0"',
+          '  before_script:',
+          '    - apt-get update -qq && apt-get install -y -qq git',
+          '    - pip install diff-cover',
+          '  script:',
+          f'    - diff-cover coverage.xml --compare-branch={compare_branch} --fail-under={fail_under}',
+          '  rules:',
+          '    - when: always',
+      ]
+      with open('tox-pipeline.yml', 'w') as f:
+          f.write('\n'.join(lines) + '\n')
+      print('Generated tox-pipeline.yml:')
+      print('\n'.join(lines))
+      PYEOF
+  artifacts:
+    paths:
+      - tox-pipeline.yml
+  rules:
+    # Fork MRs require a project member to manually trigger jobs — prevents untrusted code from running CI automatically
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+.tox-pipeline:
+  stage: test
+  needs: [tox-generate]
+  trigger:
+    include:
+      - artifact: tox-pipeline.yml
+        job: tox-generate
+    strategy: depend
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
