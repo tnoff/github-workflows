@@ -26,7 +26,10 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [gitlab/discord-notify.yml](#gitlabdiscord-notifyyml) — Send Discord notifications for MR and pipeline events
 - [gitlab/renovate.yml](#gitlabrenovateyml) — Run Renovate dependency updates on a schedule
 - [gitlab/bump-version.yml](#gitlabbump-versionyml) — Auto-bump patch version on a branch
-- [gitlab/docker-push.yml](#gitlabdocker-pushyml) — Build and push a multi-arch Docker image
+- [gitlab/buildkit-docker-push.yml](#gitlabbuildkit-docker-pushyml) — Build and push a Docker image via buildkit (cluster-service, no dind)
+- [gitlab/buildkit-build-check.yml](#gitlabbuildkit-build-checkyml) — MR-time "does the Dockerfile build" check; emits a tarball for downstream image scanning
+- [gitlab/spellcheck.yml](#gitlabspellcheckyml) — Run pyspelling against a project's spellcheck config
+- [gitlab/tox-pipeline.yml](#gitlabtox-pipelineyml) — Run a Python tox matrix dynamically as a child pipeline plus a diff-cover coverage gate
 - [gitlab/trufflehog.yml](#gitlabtrufflehogyml) — Scan the repo for leaked secrets with TruffleHog
 - [gitlab/trufflehog-image.yml](#gitlabtrufflehog-imageyml) — Scan a built Docker image for leaked secrets with TruffleHog
 - [gitlab/trigger-bump.yml](#gitlabtrigger-bumpyml) — Fire a cross-project pipeline trigger on a downstream repo after pushing a new image
@@ -926,51 +929,132 @@ bump-version:
 
 ---
 
-### `gitlab/docker-push.yml`
+### `gitlab/buildkit-docker-push.yml`
 
-Builds a Docker image for one or more platforms and pushes two tags to an OCI-compatible registry: the short commit SHA and `latest`. Uses Docker-in-Docker (`docker:27-dind`) and installs QEMU binfmt handlers via `tonistiigi/binfmt` so cross-platform builds work without a native runner for each architecture.
+Builds an OCI image with buildkit and pushes `:<short-sha>` and `:latest` tags to an OCI-compatible registry. Uses a long-running buildkitd Deployment inside the cluster (`buildkitd.gitlab-runner.svc.cluster.local:1234`) rather than docker-in-docker, so the consumer's GitLab Runner does not need privileged mode. Emits `IMAGE=<full ref>` to a dotenv artifact (`build.env`) so downstream jobs (e.g. `.trigger-bump`) can pick up the reference.
+
+Replaces the dind-based `gitlab/docker-push.yml` (removed in 0.0.44).
 
 ```yaml
 # In your app repository's .gitlab-ci.yml
 include:
-  - project: 'org/ci-workflows'
+  - project: 'tnoff-projects/github-workflows'
     ref: main
-    file: '/gitlab/docker-push.yml'
+    file: '/gitlab/buildkit-docker-push.yml'
 
 docker-push:
-  extends: .docker-push
-  stage: build
-  needs: []
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
-      when: on_success
+  extends: .buildkit-docker-push
 ```
 
-Override the target platform:
+For repos that build multiple images, define one job per image and override `OCI_REPO_NAME_64`:
 
 ```yaml
-docker-push:
-  extends: .docker-push
+docker-push-dispatcher:
+  extends: .buildkit-docker-push
   variables:
-    DOCKER_PLATFORM: 'linux/amd64'
+    DOCKERFILE_NAME: Dockerfile.dispatcher
+    OCI_REPO_NAME_64: $OCI_DISPATCHER_REPO_NAME_64
 ```
 
 **Variables:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DOCKER_PLATFORM` | `linux/arm64` | Platform(s) to build (passed to `--platform`) |
-| `OCI_REGISTRY_64` | *(required)* | OCI registry hostname (e.g. `registry.example.com`), base64-encoded |
-| `OCI_NAMESPACE_64` | *(required)* | Registry namespace / organisation, base64-encoded |
+| `BUILDKIT_IMAGE` | `docker.io/moby/buildkit:v0.30.0` | Image used to run buildctl |
+| `BUILDKIT_ADDR` | `tcp://buildkitd.gitlab-runner.svc.cluster.local:1234` | buildkitd endpoint |
+| `CONTEXT_DIR` | `.` | `buildctl --local context=` |
+| `DOCKERFILE_DIR` | `.` | `buildctl --local dockerfile=` |
+| `DOCKERFILE_NAME` | `Dockerfile` | `buildctl --opt filename=` |
+| `BUILD_ARGS` | *(empty)* | Extra buildctl flags, space-separated. Example: `--opt build-arg:DB_TYPE=sqlite` |
+| `PLATFORM` | `linux/arm64` | Target platform |
+| `OCI_REGISTRY_64` | *(required)* | OCI registry hostname, base64-encoded |
+| `OCI_NAMESPACE_64` | *(required)* | Registry namespace, base64-encoded |
 | `OCI_REPO_NAME_64` | *(required)* | Image repository name, base64-encoded |
 | `OCI_USERNAME_64` | *(required)* | Registry login username, base64-encoded |
 | `OCI_TOKEN_64` | *(required)* | Registry login password / token, base64-encoded |
 
-All values are base64-encoded so short ones (e.g. namespace, repo name) clear GitLab's masking length requirement. The template decodes them into shell variables before use.
+All `OCI_*` values are base64-encoded so short ones clear GitLab's masking length requirement.
 
 **Permissions:**
 
-No special GitLab CI permissions required. Set the `OCI_*_64` values as masked CI variables under **Settings → CI/CD → Variables**.
+Default rules push only on the default branch. Override `stage:` / `rules:` per consumer as needed.
+
+---
+
+### `gitlab/buildkit-build-check.yml`
+
+MR-time "does the Dockerfile build" validation. Builds a local image with buildkit and emits a docker-save tarball that downstream MR jobs (e.g. `.trufflehog-image`) can scan without rebuilding. No push, no registry credentials, same out-of-cluster buildkitd transport as `.buildkit-docker-push`.
+
+```yaml
+include:
+  - project: 'tnoff-projects/github-workflows'
+    ref: main
+    file: '/gitlab/buildkit-build-check.yml'
+
+build-check:
+  extends: .buildkit-build-check
+
+trufflehog-image:
+  extends: .trufflehog-image
+  stage: validate
+  needs: [build-check]
+  variables:
+    TRUFFLEHOG_IMAGE_TARBALL: image.tar
+```
+
+See the file header in [`gitlab/buildkit-build-check.yml`](./gitlab/buildkit-build-check.yml) for the full variable list (mirrors `.buildkit-docker-push` minus the registry credentials).
+
+---
+
+### `gitlab/spellcheck.yml`
+
+Runs [pyspelling](https://facelessuser.github.io/pyspelling/) against a project's spellcheck config. Default rules: every MR; fork MRs require a maintainer to click `manual`.
+
+```yaml
+include:
+  - project: 'tnoff-projects/github-workflows'
+    ref: main
+    file: '/gitlab/spellcheck.yml'
+
+spellcheck:
+  extends: .spellcheck
+  variables:
+    SPELLCHECK_NAME: html        # or 'Markdown' (default)
+```
+
+**Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SPELLCHECK_NAME` | `Markdown` | `pyspelling --name` matrix entry to run |
+| `SPELLCHECK_CONFIG` | `.spellcheck/spellcheck.yml` | `pyspelling -c` config path |
+
+The consumer must commit a pyspelling config at `SPELLCHECK_CONFIG` that defines the named matrix entry passed via `SPELLCHECK_NAME`.
+
+---
+
+### `gitlab/tox-pipeline.yml`
+
+Runs a Python tox test matrix dynamically as a child pipeline, plus a diff-cover coverage gate against the target branch. Because GitLab CI doesn't support taking a YAML list as a job-level variable, the matrix is generated by introspecting `tox -l` and writing a child-pipeline YAML; the parent then triggers it via `include: artifact:`.
+
+The standard consumer pair:
+
+```yaml
+include:
+  - project: 'tnoff-projects/github-workflows'
+    ref: main
+    file: '/gitlab/tox-pipeline.yml'
+
+tox-generate:
+  extends: .tox-generate
+
+tox-pipeline:
+  extends: .tox-pipeline
+```
+
+The `tox-pipeline` job's `needs: [tox-generate]` is baked into the template — the consumer's matching job MUST be named `tox-generate`.
+
+See the file header in [`gitlab/tox-pipeline.yml`](./gitlab/tox-pipeline.yml) for system-dependency overrides (e.g. installing `ffmpeg` before tox runs) and the full variable list.
 
 ---
 

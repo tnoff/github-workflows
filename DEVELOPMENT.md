@@ -269,11 +269,31 @@ curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
 act -l
 
 # Run a specific workflow
-act -W .github/workflows/auto-tag.yml
+act -W .github/workflows/tag.yml
 
 # Run with secrets
 act -s OCI_REGISTRY=iad.ocir.io/namespace -s OCI_USERNAME=user
 ```
+
+## Validating GitLab CI templates
+
+`actionlint` only covers GitHub Actions. The GitLab CI templates under
+`gitlab/` should be validated with [`gitlab-ci-local`](https://github.com/firecow/gitlab-ci-local)
+before pushing — it executes the pipeline locally inside Docker and
+catches stage-ordering, `extends`, and variable-interpolation bugs that
+GitLab's server-side lint surfaces only after the pipeline starts.
+
+```bash
+# Install on Debian/Ubuntu
+npm install -g gitlab-ci-local
+
+# Run from inside a consuming repo that `include:`s a template
+gitlab-ci-local --list                  # show jobs the include resolves to
+gitlab-ci-local <job-name>              # execute one job locally
+```
+
+Useful for changes to the `gitlab/` templates that touch stage
+ordering, `extends:`, `rules:`, or variable interpolation.
 
 ## Additional Resources
 
@@ -281,3 +301,5 @@ act -s OCI_REGISTRY=iad.ocir.io/namespace -s OCI_USERNAME=user
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [Reusable Workflows Guide](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
 - [act Documentation](https://github.com/nektos/act)
+- [gitlab-ci-local](https://github.com/firecow/gitlab-ci-local)
+- [GitLab CI `include:` reference](https://docs.gitlab.com/ci/yaml/#include)

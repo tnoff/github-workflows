@@ -1,194 +1,96 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents when working with code in this repository.
+Guidance for AI coding agents working in this repository. For the full
+catalogue of reusable workflows / templates (inputs, secrets, outputs,
+examples) see [README.md](README.md); for local setup, linting, and
+testing changes see [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Project Overview
+## What this repo is
 
-**github-workflows** is a centralized repository containing reusable GitHub Actions workflows for standardizing CI/CD pipelines across all application repositories. This repository implements the "reusable workflows" pattern to ensure consistent Docker image building, tagging, and deployment to OCI Container Registry (OCIR).
+A central catalogue of two parallel sets of reusable CI building blocks
+consumed by application repositories:
 
-## Purpose
+| Layout | Consumer |
+|---|---|
+| `.github/workflows/*.yml` | GitHub Actions repositories (`uses: tnoff/github-workflows/.github/workflows/<file>@<ref>`) |
+| `gitlab/*.yml` | GitLab CI repositories (`include: { project: 'tnoff-projects/github-workflows', file: '/gitlab/<file>', ref: '<ref>' }`) |
 
-Application repositories use similar CI/CD logic for building Docker images and pushing to OCIR. This repository provides shared, versioned workflows that eliminate duplication and ensure consistency across all applications.
+The GitHub Actions and GitLab CI sets are not always one-to-one — some
+templates exist in only one. The README has the authoritative list for
+each.
 
-## Repository Structure
+## What this repo is NOT
 
-```
-github-workflows/
-├── .github/workflows/          # GitHub Actions workflows
-│   ├── ocir-push.yml           # Reusable: Docker build & push workflow
-│   ├── tag.yml                 # Reusable: Auto-tagging workflow
-│   └── auto-tag.yml            # Repo-specific: Tags this repository on merge
-├── README.md                   # User-facing documentation
-├── DEVELOPMENT.md              # Development setup and workflow validation
-└── AGENTS.md                   # This file
-```
+It does not host any consumer-side workflow / pipeline. It only exports
+reusable building blocks. The repo's own `.github/workflows/auto-tag.yml`
+(or similar self-management workflow) is internal plumbing for tagging
+*this* repo and is not a public surface.
 
-## Key Workflows
+## Non-obvious rules to honour
 
-### ocir-push.yml
+### Consumers pin by `@v<N>` or by commit SHA — preserve backwards compatibility
 
-**Purpose:** Build and push Docker images to OCIR with standardized VERSION file-based tagging.
+Apps reference these workflows by version tag (`@v0`, `@v1`) or commit
+SHA. Any change that alters the inputs, secrets, outputs, or behaviour
+of an existing workflow is a **breaking change** and must go behind a
+new major version tag. Documentation-only or new-input-with-default
+changes can ride the existing tag.
 
-**Features:**
-- Reads version from a VERSION file in the calling repository
-- Generates three tags: `<version>`, `<commit-sha>`, `latest` (on main)
-- Supports multi-platform builds (linux/amd64, linux/arm64)
-- Conditional push (can build-only for PRs without pushing)
-- Docker layer caching via GitHub Actions cache
-- Rich build summary in GitHub UI
+### Two parallel template surfaces — keep them in sync where they overlap
 
-**Usage Pattern:**
-```yaml
-# In calling repository (e.g., my-app/.github/workflows/ci.yml)
-jobs:
-  build-check:
-    if: github.event_name == 'pull_request'
-    uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
-    with:
-      image_name: my-app
-      registry_namespace: my-namespace
-      push_image: false
-    secrets:
-      oci_registry: ${{ secrets.OCI_REGISTRY }}
-      oci_username: ${{ secrets.OCI_USERNAME }}
-      oci_password: ${{ secrets.OCI_PASSWORD }}
-```
+`gitlab/tag.yml` and `.github/workflows/tag.yml` (and similarly for
+`bump-version`, `discord-notify`, etc.) share semantics. When you change
+the behaviour of one, audit the other for the same change — drifting
+the GitHub and GitLab versions of "what should be the same template"
+creates the same class of bug across every consumer.
 
-**Inputs:**
-- `image_name` (required) - Name of the Docker image
-- `registry_namespace` (optional) - OCI registry namespace
-- `dockerfile_path` (optional, default: `./Dockerfile`) - Path to Dockerfile
-- `docker_context` (optional, default: `.`) - Build context
-- `platforms` (optional, default: `linux/amd64,linux/arm64`) - Target platforms
-- `version_file` (optional, default: `./VERSION`) - Path to VERSION file
-- `push_image` (optional, default: `true`) - Whether to push the image
+### VERSION file is the single source of truth for app versions
 
-**Secrets:**
-- `oci_registry` (required) - OCIR URL (e.g., `iad.ocir.io`)
-- `oci_username` (required) - OCIR username
-- `oci_password` (required) - OCIR auth token
+Apps that consume `ocir-push.yml` / `buildkit-docker-push.yml` read
+their version from a `VERSION` file at the repo root. Rules:
 
-**Outputs:**
-- `version` - Version read from VERSION file
-- `image_tags` - Full image tags that were built
-
-## Tagging Strategy
-
-### VERSION File Format
-Each application repository should have a VERSION file in the root:
-```
-0.0.4
-```
-
-Rules:
-- Semantic versioning format (MAJOR.MINOR.PATCH)
-- No `v` prefix
+- Semantic versioning (`MAJOR.MINOR.PATCH`)
+- **No `v` prefix** (workflows fail on `v0.0.4`)
 - No trailing whitespace
 
-### Generated Tags
+`bump-version.yml` / `gitlab/bump-version.yml` increments this file
+automatically; `tag.yml` / `gitlab/tag.yml` reads it and creates the
+matching git tag.
 
-**On Pull Request** (with `push_image: false`):
-- `<commit-sha>` - 7-character short SHA
+### Standard image tagging
 
-**On Main Branch Push:**
-- `<version>` - From VERSION file (e.g., `0.0.4`)
-- `<commit-sha>` - 7-character short SHA
-- `latest` - Always the most recent main build
+When `ocir-push.yml` / `buildkit-docker-push.yml` push an image they
+produce three tags on `main`:
 
-**Example:**
-```
-iad.ocir.io/my-namespace/my-app:0.0.4
-iad.ocir.io/my-namespace/my-app:abc1234
-iad.ocir.io/my-namespace/my-app:latest
-```
+- `<version>` — from the VERSION file (e.g. `0.0.4`)
+- `<commit-sha>` — 7-character short SHA
+- `latest` — only on main builds
 
-## Versioning This Repository
+On PRs / MRs the workflow only produces the SHA tag (and may build
+without pushing, depending on inputs).
 
-This repository uses Git tags for version stability:
+Downstream Kubernetes manifests should reference pinned SHA tags in
+prod and `latest` only in dev — this is enforced by `conftest` policies
+in the [`docker-apps`](../docker-apps) repo.
 
-```bash
-# Create a new version
-git tag -a v1 -m "Version 1.0.0"
-git push origin v1
+### Pre-commit + actionlint are the gate
 
-# Apps reference specific versions
-uses: tnoff/github-workflows/.github/workflows/ocir-push.yml@v1
-```
+Every PR runs the pre-commit suite. `actionlint` catches workflow
+syntax / expression errors before they make it into a release. Don't
+disable hooks (`--no-verify`) when committing — if a hook is wrong, fix
+the hook config or the file, not the bypass. See
+[DEVELOPMENT.md](DEVELOPMENT.md) for setup.
 
-**Recommended reference strategies:**
-- `@v1` - Latest v1.x.x (recommended for stability with updates)
-- `@main` - Bleeding edge (for testing new features)
-- `@<commit-sha>` - Pinned to specific commit (maximum stability)
+### Local validation for GitLab CI
 
-## Making Changes to Workflows
+`actionlint` only covers GitHub Actions. For changes to `gitlab/`
+templates, validate locally with `gitlab-ci-local` before pushing — it
+catches stage ordering, `extends` misuse, and variable interpolation
+bugs that GitLab's server-side lint won't flag until pipeline run time.
 
-When modifying workflows in this repository:
+## Canonical remote
 
-1. **Test locally first** - Use act or test in a sandbox repo
-2. **Create a feature branch** - Don't modify main directly
-3. **Test with one app** - Update one app to use `@<branch-name>` before merging
-4. **Version appropriately:**
-   - Patch change (bug fix): Update docs, no new tag needed (apps using `@v1` get it automatically)
-   - Minor change (new feature, backward compatible): Update docs, consider `v1.1.0` tag
-   - Major change (breaking): Create `v2` tag, document migration path
-
-## Integration with Infrastructure
-
-### Infrastructure-as-Code Integration
-Infrastructure tools can create GitHub repositories and inject the OCIR credentials as secrets:
-- `OCI_REGISTRY`
-- `OCI_USERNAME`
-- `OCI_PASSWORD`
-
-These secrets are consumed by the reusable workflows.
-
-### Application Repositories
-Each app should:
-1. Have a VERSION file in the root
-2. Replace existing workflows with calls to this repository's workflows
-3. Update on merge to main (or use label-based triggering if preferred)
-
-### Kubernetes Deployments
-Kubernetes manifests reference the tagged images. After standardization, they can reliably use:
-- `latest` for development environments
-- `<version>` for production deployments
-- `<commit-sha>` for debugging specific builds
-
-## Migration Guide
-
-For step-by-step migration instructions, see:
-- `examples/app-migration-guide.md` - Detailed migration example
-- `examples/standard-app-workflow.yml` - Template for new apps
-
-**Migration checklist per app:**
-1. ✅ Add VERSION file if not present
-2. ✅ Create or update `.github/workflows/ci.yml`
-3. ✅ Remove old workflow files
-4. ✅ Test with a PR (should build but not push)
-5. ✅ Merge and verify push to OCIR
-6. ✅ Update Kubernetes manifests if needed
-
-## Future Enhancements
-
-Planned additional workflows:
-- `python-test.yml` - Standardized pytest with coverage
-- `python-lint.yml` - Standardized linting (pylint, ruff, black)
-- `semantic-release.yml` - Auto-bump VERSION file based on conventional commits
-- `docker-scan.yml` - Security scanning with Trivy or Snyk
-- `multi-stage-build.yml` - Optimized multi-stage Docker builds
-
-## Important Notes for AI Assistants
-
-1. **Don't modify workflows without testing** - Changes affect all consuming repositories
-2. **Maintain backward compatibility** - Apps may reference `@v1` and expect consistent behavior
-3. **Document all changes** - Update README.md with any workflow modifications
-4. **Version appropriately** - Breaking changes require new major version tag
-5. **Test before tagging** - Use feature branches and test in a real app repo first
-6. **Keep workflows focused** - Each workflow should do one thing well
-7. **Use semantic versioning** - Follow semver for repository tags
-
-## Related Documentation
-
-- See `/home/tnorth/Code/AGENTS.md` for overall architecture
-- See `/home/tnorth/Code/PROJECTS.md` for the standardization roadmap
-- See individual app repositories for usage examples after migration
+The authoritative remote is GitLab:
+`gitlab.com/tnoff-projects/github-workflows`. The GitHub remote is a
+mirror used for GitHub Actions consumers. New GitLab CI `include:`
+references should use `project: 'tnoff-projects/github-workflows'`.
