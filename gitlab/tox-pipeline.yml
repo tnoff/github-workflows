@@ -31,10 +31,33 @@
 #     variables:
 #       TOX_EXTRA_APT: 'sqlite3 ffmpeg'
 #
+# Alternatively, set TOX_BASE_IMAGE to a pre-baked image that already
+# contains git + the system deps you'd otherwise install via apt. The
+# generated child pipeline then skips the apt-get step entirely and
+# only runs `pip install tox` before the tox command. Use ${PYTHON_VERSION}
+# in the string to template per matrix entry:
+#
+#   tox-generate:
+#     extends: .tox-generate
+#     variables:
+#       TOX_BASE_IMAGE: '${CI_BASE_IMAGE_PATH}:${PYTHON_VERSION}'
+#
+# When TOX_BASE_IMAGE is set, TOX_EXTRA_APT is ignored — the base image
+# is the source of truth for system deps.
+#
 # Optional variables on `.tox-generate` (defaults shown):
 #   TOX_EXTRA_APT             (empty)        Extra apt packages for the tox
 #                                              child-pipeline job (appended
 #                                              after the default `git`).
+#                                              Ignored when TOX_BASE_IMAGE
+#                                              is set.
+#   TOX_BASE_IMAGE            (empty)        Pre-baked image reference for
+#                                              the tox child-pipeline job.
+#                                              When set, replaces the
+#                                              docker.io/library/python:X.Y-slim
+#                                              default and skips apt-get.
+#                                              Use ${PYTHON_VERSION} to
+#                                              template per matrix entry.
 #   DIFF_COVER_FAIL_UNDER     100            Coverage threshold (percent).
 #   DIFF_COVER_COMPARE_BRANCH origin/main    Branch to diff against.
 #
@@ -46,6 +69,7 @@
   image: docker.io/library/python:3.14-slim
   variables:
     TOX_EXTRA_APT: ''
+    TOX_BASE_IMAGE: ''
     DIFF_COVER_FAIL_UNDER: '100'
     DIFF_COVER_COMPARE_BRANCH: 'origin/main'
   before_script:
@@ -74,10 +98,21 @@
       latest = max(versions, key=lambda v: tuple(int(p) for p in v.split('.')))
 
       extra_apt = os.environ.get('TOX_EXTRA_APT', '').strip()
+      base_image = os.environ.get('TOX_BASE_IMAGE', '').strip()
       fail_under = os.environ.get('DIFF_COVER_FAIL_UNDER', '100')
       compare_branch = os.environ.get('DIFF_COVER_COMPARE_BRANCH', 'origin/main')
 
       tox_apt = ('git ' + extra_apt).strip()
+
+      if base_image:
+          tox_image_line = f'  image: {base_image}'
+          tox_before_script = ['    - pip install tox']
+      else:
+          tox_image_line = '  image: docker.io/library/python:${PYTHON_VERSION}-slim'
+          tox_before_script = [
+              f'    - apt-get update -qq && apt-get install -y -qq {tox_apt}',
+              '    - pip install tox',
+          ]
 
       lines = [
           'stages:',
@@ -90,13 +125,12 @@
           '',
           'tox:',
           '  stage: test',
-          '  image: docker.io/library/python:${PYTHON_VERSION}-slim',
+          tox_image_line,
           '  parallel:',
           '    matrix:',
           f'      - PYTHON_VERSION: {versions_yaml}',
           '  before_script:',
-          f'    - apt-get update -qq && apt-get install -y -qq {tox_apt}',
-          '    - pip install tox',
+          *tox_before_script,
           '  script:',
           "    - tox -e $(python3 -c \"import sys; v=sys.version_info; print(f'py{v.major}{v.minor}')\")",
           '  artifacts:',

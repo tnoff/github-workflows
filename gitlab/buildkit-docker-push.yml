@@ -48,6 +48,14 @@
 #   BUILD_ARGS          (empty)      Extra buildctl flags, space-separated.
 #                                     Example: '--opt build-arg:DB_TYPE=sqlite'
 #   PLATFORM            linux/arm64
+#   TAG_OVERRIDE        (empty)      Replace the default :<short-sha> +
+#                                     :latest tag pair with :$TAG_OVERRIDE
+#                                     and :$TAG_OVERRIDE-<short-sha>. Used by
+#                                     producers that publish more than one
+#                                     mutable channel from the same repo
+#                                     (e.g. ci-base-images pushes :3.11 +
+#                                     :3.11-<sha>, :3.12 + :3.12-<sha>, ...).
+#                                     Defaults preserve current behavior.
 #
 # Override `stage:` / `rules:` per consumer as needed (default `stage: build`
 # and pushes only on the default branch).
@@ -64,6 +72,7 @@
     DOCKERFILE_NAME: Dockerfile
     BUILD_ARGS: ''
     PLATFORM: linux/arm64
+    TAG_OVERRIDE: ''
     DOCKER_CONFIG: /tmp/.docker
   before_script:
     - mkdir -p "$DOCKER_CONFIG"
@@ -92,13 +101,13 @@
       echo "IMAGE=$IMAGE" >> build.env
   script:
     - |
-      buildctl --addr "$BUILDKIT_ADDR" build \
-        --frontend dockerfile.v0 \
-        --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
-        --opt filename="$DOCKERFILE_NAME" \
-        --opt platform="$PLATFORM" \
-        $BUILD_ARGS \
-        --output type=image,name="$IMAGE":"$CI_COMMIT_SHORT_SHA",push=true
+      if [ -n "$TAG_OVERRIDE" ]; then
+        PRIMARY_TAG="$TAG_OVERRIDE"
+        SECONDARY_TAG="$TAG_OVERRIDE-$CI_COMMIT_SHORT_SHA"
+      else
+        PRIMARY_TAG="latest"
+        SECONDARY_TAG="$CI_COMMIT_SHORT_SHA"
+      fi
     - |
       buildctl --addr "$BUILDKIT_ADDR" build \
         --frontend dockerfile.v0 \
@@ -106,7 +115,15 @@
         --opt filename="$DOCKERFILE_NAME" \
         --opt platform="$PLATFORM" \
         $BUILD_ARGS \
-        --output type=image,name="$IMAGE":latest,push=true
+        --output type=image,name="$IMAGE":"$SECONDARY_TAG",push=true
+    - |
+      buildctl --addr "$BUILDKIT_ADDR" build \
+        --frontend dockerfile.v0 \
+        --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
+        --opt filename="$DOCKERFILE_NAME" \
+        --opt platform="$PLATFORM" \
+        $BUILD_ARGS \
+        --output type=image,name="$IMAGE":"$PRIMARY_TAG",push=true
   artifacts:
     reports:
       dotenv: build.env

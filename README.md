@@ -967,6 +967,7 @@ docker-push-dispatcher:
 | `DOCKERFILE_NAME` | `Dockerfile` | `buildctl --opt filename=` |
 | `BUILD_ARGS` | *(empty)* | Extra buildctl flags, space-separated. Example: `--opt build-arg:DB_TYPE=sqlite` |
 | `PLATFORM` | `linux/arm64` | Target platform |
+| `TAG_OVERRIDE` | *(empty)* | When set, replaces the default `:<short-sha>` + `:latest` tag pair with `:$TAG_OVERRIDE-<short-sha>` + `:$TAG_OVERRIDE`. Used by producers that publish more than one mutable channel from the same repo (e.g. `ci-base-images` pushes `:3.11`, `:3.12`, ...). |
 | `OCI_REGISTRY_64` | *(required)* | OCI registry hostname, base64-encoded |
 | `OCI_NAMESPACE_64` | *(required)* | Registry namespace, base64-encoded |
 | `OCI_REPO_NAME_64` | *(required)* | Image repository name, base64-encoded |
@@ -1054,7 +1055,16 @@ tox-pipeline:
 
 The `tox-pipeline` job's `needs: [tox-generate]` is baked into the template — the consumer's matching job MUST be named `tox-generate`.
 
-See the file header in [`gitlab/tox-pipeline.yml`](./gitlab/tox-pipeline.yml) for system-dependency overrides (e.g. installing `ffmpeg` before tox runs) and the full variable list.
+For repos that need extra apt packages at job time, set `TOX_EXTRA_APT` on the generate job (e.g. `'ffmpeg postgresql-client'`); `git` is always installed by the template. To skip apt entirely and use a pre-baked CI base image, set `TOX_BASE_IMAGE` to a full image reference and use `${PYTHON_VERSION}` as a per-matrix placeholder:
+
+```yaml
+tox-generate:
+  extends: .tox-generate
+  variables:
+    TOX_BASE_IMAGE: '${CI_BASE_IMAGE_PATH}:${PYTHON_VERSION}'
+```
+
+`TOX_BASE_IMAGE` overrides `TOX_EXTRA_APT` when both are set. See [`gitlab/tox-pipeline.yml`](./gitlab/tox-pipeline.yml) for the full variable list.
 
 ---
 
