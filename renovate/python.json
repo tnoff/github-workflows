@@ -1,0 +1,44 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Python project conventions: test/lint deps automerged under test- prefix, other pep621/dockerfile updates grouped under dev- (PR only).",
+  "packageRules": [
+    {
+      "description": "Test/lint deps get their own prefix and automerge",
+      "matchPackageNames": [
+        "pytest",
+        "pytest-cov",
+        "pytest-mock",
+        "pytest-asyncio",
+        "pytest-freezegun",
+        "requests-mock",
+        "fakeredis",
+        "freezegun",
+        "tox",
+        "pylint",
+        "pylint-pydantic",
+        "bandit"
+      ],
+      "additionalBranchPrefix": "test-",
+      "automerge": true
+    },
+    {
+      "description": "Non-test pep621/dockerfile updates land under dev- prefix",
+      "matchManagers": ["pep621", "dockerfile"],
+      "matchPackageNames": [
+        "!pytest",
+        "!pytest-cov",
+        "!pytest-mock",
+        "!pytest-asyncio",
+        "!pytest-freezegun",
+        "!requests-mock",
+        "!fakeredis",
+        "!freezegun",
+        "!tox",
+        "!pylint",
+        "!pylint-pydantic",
+        "!bandit"
+      ],
+      "additionalBranchPrefix": "dev-"
+    }
+  ]
+}
