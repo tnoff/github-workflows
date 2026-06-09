@@ -8,7 +8,7 @@
       "customType": "regex",
       "fileMatch": ["\\.tf$"],
       "matchStrings": [
-        "source\\s*=\\s*\"git::(?<depName>https?://[^?\"]+terraform-modules[^?\"]*)\\?ref=(?<currentDigest>[a-f0-9]{40})\""
+        "source\\s*=\\s*\"git::(?<depName>https?://[^?\"]+?/terraform-modules)\\.git(?://[^?\"]*)?\\?ref=(?<currentDigest>[a-f0-9]{40})\""
       ],
       "datasourceTemplate": "git-refs",
       "currentValueTemplate": "main"
