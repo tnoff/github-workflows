@@ -56,6 +56,18 @@
 #                                     (e.g. ci-base-images pushes :3.11 +
 #                                     :3.11-<sha>, :3.12 + :3.12-<sha>, ...).
 #                                     Defaults preserve current behavior.
+#   CACHE_NAME          $CI_PROJECT_NAME-$DOCKERFILE_NAME  S3 cache key.
+#                                     Same key as the .buildkit-build-check
+#                                     template uses, so MR build-checks
+#                                     populate the cache that this main-branch
+#                                     push reads.
+#
+# S3 cache is opt-in by env: when BUILDKIT_CACHE_BUCKET is set (the OKE
+# runner injects it from the `buildkit-s3-creds` secret), every build
+# imports + exports OCI cache manifests to OCI Object Storage S3-compat
+# so subsequent builds reuse layers across pod / buildkitd restarts.
+# When the env var is unset (consumer running on a different runner),
+# the build runs cold and the cache flags are skipped.
 #
 # Override `stage:` / `rules:` per consumer as needed (default `stage: build`
 # and pushes only on the default branch).
@@ -74,6 +86,7 @@
     PLATFORM: linux/arm64
     TAG_OVERRIDE: ''
     DOCKER_CONFIG: /tmp/.docker
+    CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
   before_script:
     - mkdir -p "$DOCKER_CONFIG"
     - |
@@ -108,6 +121,14 @@
         PRIMARY_TAG="latest"
         SECONDARY_TAG="$CI_COMMIT_SHORT_SHA"
       fi
+      CACHE_ARGS=""
+      if [ -n "${BUILDKIT_CACHE_BUCKET:-}" ]; then
+        S3_COMMON="type=s3,region=${AWS_REGION},endpoint_url=${AWS_ENDPOINT_URL_S3},bucket=${BUILDKIT_CACHE_BUCKET},name=${CACHE_NAME}"
+        CACHE_ARGS="--import-cache ${S3_COMMON} --export-cache ${S3_COMMON},mode=max"
+        echo "buildkit S3 cache enabled: name=${CACHE_NAME} bucket=${BUILDKIT_CACHE_BUCKET}"
+      else
+        echo "BUILDKIT_CACHE_BUCKET not set — building without remote cache"
+      fi
     - |
       buildctl --addr "$BUILDKIT_ADDR" build \
         --frontend dockerfile.v0 \
@@ -115,6 +136,7 @@
         --opt filename="$DOCKERFILE_NAME" \
         --opt platform="$PLATFORM" \
         $BUILD_ARGS \
+        $CACHE_ARGS \
         --output type=image,name="$IMAGE":"$SECONDARY_TAG",push=true
     - |
       buildctl --addr "$BUILDKIT_ADDR" build \
@@ -123,6 +145,7 @@
         --opt filename="$DOCKERFILE_NAME" \
         --opt platform="$PLATFORM" \
         $BUILD_ARGS \
+        $CACHE_ARGS \
         --output type=image,name="$IMAGE":"$PRIMARY_TAG",push=true
   artifacts:
     reports:

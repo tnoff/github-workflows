@@ -45,6 +45,17 @@
 #   OUTPUT_NAME         $CI_PROJECT_NAME:ci  Local image tag
 #   OUTPUT_TARBALL      image.tar      docker-save tarball path; published as
 #                                       an artifact with 1-day expiry
+#   CACHE_NAME          $CI_PROJECT_NAME-$DOCKERFILE_NAME  S3 cache key.
+#                                       One cache namespace per (repo, Dockerfile)
+#                                       so multi-image repos (bot + dispatcher)
+#                                       don't stomp each other.
+#
+# S3 cache is opt-in by env: when BUILDKIT_CACHE_BUCKET is set (the OKE
+# runner injects it from the `buildkit-s3-creds` secret), every build
+# imports + exports OCI cache manifests to OCI Object Storage S3-compat
+# so subsequent builds reuse layers across pod / buildkitd restarts.
+# When the env var is unset (consumer running on a different runner),
+# the build runs cold and the cache flags are skipped.
 #
 # Default rules: runs on every MR; fork-MRs require a maintainer to click
 # `manual` (prevents untrusted code from running CI automatically).
@@ -62,13 +73,24 @@
     BUILD_ARGS: ''
     OUTPUT_NAME: $CI_PROJECT_NAME:ci
     OUTPUT_TARBALL: image.tar
+    CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
   script:
+    - |
+      CACHE_ARGS=""
+      if [ -n "${BUILDKIT_CACHE_BUCKET:-}" ]; then
+        S3_COMMON="type=s3,region=${AWS_REGION},endpoint_url=${AWS_ENDPOINT_URL_S3},bucket=${BUILDKIT_CACHE_BUCKET},name=${CACHE_NAME}"
+        CACHE_ARGS="--import-cache ${S3_COMMON} --export-cache ${S3_COMMON},mode=max"
+        echo "buildkit S3 cache enabled: name=${CACHE_NAME} bucket=${BUILDKIT_CACHE_BUCKET}"
+      else
+        echo "BUILDKIT_CACHE_BUCKET not set — building without remote cache"
+      fi
     - |
       buildctl --addr "$BUILDKIT_ADDR" build \
         --frontend dockerfile.v0 \
         --local context="$CONTEXT_DIR" --local dockerfile="$DOCKERFILE_DIR" \
         --opt filename="$DOCKERFILE_NAME" \
         $BUILD_ARGS \
+        $CACHE_ARGS \
         --output type=docker,name="$OUTPUT_NAME",dest="$OUTPUT_TARBALL"
   artifacts:
     paths:
