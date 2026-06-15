@@ -155,7 +155,7 @@
           '  script:',
           f'    - diff-cover coverage.xml --compare-branch={compare_branch} --fail-under={fail_under}',
           '  rules:',
-          '    - when: always',
+          '    - when: on_success',
       ]
       with open('tox-pipeline.yml', 'w') as f:
           f.write('\n'.join(lines) + '\n')
