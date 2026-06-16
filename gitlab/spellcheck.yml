@@ -26,13 +26,10 @@
 
 .spellcheck:
   stage: validate
-  image: docker.io/library/python:3.14-slim
+  image: $CI_SPELLCHECK_IMAGE
   variables:
     SPELLCHECK_NAME: Markdown
     SPELLCHECK_CONFIG: .spellcheck/spellcheck.yml
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq aspell aspell-en
-    - pip install pyspelling
   script:
     - pyspelling -c "$SPELLCHECK_CONFIG" --name "$SPELLCHECK_NAME"
   rules:
