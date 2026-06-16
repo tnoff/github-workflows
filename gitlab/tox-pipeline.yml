@@ -32,10 +32,13 @@
 #       TOX_EXTRA_APT: 'sqlite3 ffmpeg'
 #
 # Alternatively, set TOX_BASE_IMAGE to a pre-baked image that already
-# contains git + the system deps you'd otherwise install via apt. The
-# generated child pipeline then skips the apt-get step entirely and
-# only runs `pip install tox` before the tox command. Use ${PYTHON_VERSION}
-# in the string to template per matrix entry:
+# contains git + the system deps you'd otherwise install via apt, plus
+# `diff-cover` (for the coverage stage). The generated child pipeline
+# then skips the apt-get step entirely and only runs `pip install tox`
+# before the tox command on the tox job, and skips before_script
+# entirely on the diff-cover job. Use ${PYTHON_VERSION} in the string
+# to template per matrix entry (diff-cover substitutes it with the
+# latest minor):
 #
 #   tox-generate:
 #     extends: .tox-generate
@@ -107,12 +110,43 @@
       if base_image:
           tox_image_line = f'  image: {base_image}'
           tox_before_script = ['    - pip install tox']
+          # diff-cover runs only on the coverage stage against `latest`, so
+          # ${PYTHON_VERSION} substitution happens here (not via GitLab's
+          # parallel-matrix expansion). diff-cover itself is expected to be
+          # pre-baked in the image (see ci-base-images/python/Dockerfile);
+          # only `git` is needed in addition, and the base image carries it.
+          diff_image_line = f'  image: {base_image.replace("${PYTHON_VERSION}", latest)}'
+          diff_before_script = []
       else:
           tox_image_line = '  image: docker.io/library/python:${PYTHON_VERSION}-slim'
           tox_before_script = [
               f'    - apt-get update -qq && apt-get install -y -qq {tox_apt}',
               '    - pip install tox',
           ]
+          diff_image_line = f'  image: docker.io/library/python:{latest}-slim'
+          diff_before_script = [
+              '    - apt-get update -qq && apt-get install -y -qq git',
+              '    - pip install diff-cover',
+          ]
+
+      diff_cover_lines = [
+          'diff-cover:',
+          '  stage: coverage',
+          diff_image_line,
+          '  needs:',
+          f'    - job: "tox: [{latest}]"',
+          '      artifacts: true',
+          '  variables:',
+          '    GIT_DEPTH: "0"',
+      ]
+      if diff_before_script:
+          diff_cover_lines += ['  before_script:', *diff_before_script]
+      diff_cover_lines += [
+          '  script:',
+          f'    - diff-cover coverage.xml --compare-branch={compare_branch} --fail-under={fail_under}',
+          '  rules:',
+          '    - when: on_success',
+      ]
 
       lines = [
           'stages:',
@@ -141,21 +175,7 @@
           '  rules:',
           '    - when: always',
           '',
-          'diff-cover:',
-          '  stage: coverage',
-          f'  image: docker.io/library/python:{latest}-slim',
-          '  needs:',
-          f'    - job: "tox: [{latest}]"',
-          '      artifacts: true',
-          '  variables:',
-          '    GIT_DEPTH: "0"',
-          '  before_script:',
-          '    - apt-get update -qq && apt-get install -y -qq git',
-          '    - pip install diff-cover',
-          '  script:',
-          f'    - diff-cover coverage.xml --compare-branch={compare_branch} --fail-under={fail_under}',
-          '  rules:',
-          '    - when: on_success',
+          *diff_cover_lines,
       ]
       with open('tox-pipeline.yml', 'w') as f:
           f.write('\n'.join(lines) + '\n')
