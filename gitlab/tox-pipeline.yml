@@ -33,9 +33,8 @@
 #
 # Alternatively, set TOX_BASE_IMAGE to a pre-baked image that already
 # contains git + the system deps you'd otherwise install via apt, plus
-# `diff-cover` (for the coverage stage). The generated child pipeline
-# then skips the apt-get step entirely and only runs `pip install tox`
-# before the tox command on the tox job, and skips before_script
+# `tox` and `diff-cover`. The generated child pipeline then skips apt-get
+# AND `pip install tox` for the tox jobs, and skips before_script
 # entirely on the diff-cover job. Use ${PYTHON_VERSION} in the string
 # to template per matrix entry (diff-cover substitutes it with the
 # latest minor):
@@ -44,6 +43,16 @@
 #     extends: .tox-generate
 #     variables:
 #       TOX_BASE_IMAGE: '${CI_BASE_IMAGE_PATH}:${PYTHON_VERSION}'
+#
+# Similarly, set TOX_GENERATE_IMAGE to a pre-baked image that already
+# contains `tox` to skip the parent `.tox-generate` job's own
+# `pip install tox`. Unlike TOX_BASE_IMAGE, this is a single concrete
+# tag (the parent runs once, not per matrix entry):
+#
+#   tox-generate:
+#     extends: .tox-generate
+#     variables:
+#       TOX_GENERATE_IMAGE: '${CI_BASE_IMAGE_PATH}:3.14'
 #
 # When TOX_BASE_IMAGE is set, TOX_EXTRA_APT is ignored — the base image
 # is the source of truth for system deps.
@@ -58,9 +67,18 @@
 #                                              the tox child-pipeline job.
 #                                              When set, replaces the
 #                                              docker.io/library/python:X.Y-slim
-#                                              default and skips apt-get.
+#                                              default and skips both
+#                                              apt-get and `pip install tox`.
 #                                              Use ${PYTHON_VERSION} to
 #                                              template per matrix entry.
+#   TOX_GENERATE_IMAGE        python:3.14-slim
+#                                            Pre-baked image for the parent
+#                                              `.tox-generate` job itself
+#                                              (not the matrix child). When
+#                                              the image already carries
+#                                              `tox`, `pip install tox` is
+#                                              skipped via a `command -v`
+#                                              probe. Single concrete tag.
 #   DIFF_COVER_FAIL_UNDER     100            Coverage threshold (percent).
 #   DIFF_COVER_COMPARE_BRANCH origin/main    Branch to diff against.
 #
@@ -69,14 +87,17 @@
 
 .tox-generate:
   stage: validate
-  image: docker.io/library/python:3.14-slim
+  image: $TOX_GENERATE_IMAGE
   variables:
     TOX_EXTRA_APT: ''
     TOX_BASE_IMAGE: ''
+    TOX_GENERATE_IMAGE: 'docker.io/library/python:3.14-slim'
     DIFF_COVER_FAIL_UNDER: '100'
     DIFF_COVER_COMPARE_BRANCH: 'origin/main'
   before_script:
-    - pip install tox
+    # Pre-baked TOX_GENERATE_IMAGE may already carry tox; the probe makes
+    # this a no-op on the slim default and a ~10ms skip on the pre-bake.
+    - command -v tox >/dev/null 2>&1 || pip install tox
   script:
     - |
       python3 - <<'PYEOF'
@@ -109,12 +130,13 @@
 
       if base_image:
           tox_image_line = f'  image: {base_image}'
-          tox_before_script = ['    - pip install tox']
+          # TOX_BASE_IMAGE is expected to carry tox + diff-cover (see
+          # ci-base-images/python/Dockerfile). Drop before_script entirely;
+          # the consumer's responsibility to point at an image that has tox.
+          tox_before_script = []
           # diff-cover runs only on the coverage stage against `latest`, so
           # ${PYTHON_VERSION} substitution happens here (not via GitLab's
-          # parallel-matrix expansion). diff-cover itself is expected to be
-          # pre-baked in the image (see ci-base-images/python/Dockerfile);
-          # only `git` is needed in addition, and the base image carries it.
+          # parallel-matrix expansion).
           diff_image_line = f'  image: {base_image.replace("${PYTHON_VERSION}", latest)}'
           diff_before_script = []
       else:
@@ -148,23 +170,17 @@
           '    - when: on_success',
       ]
 
-      lines = [
-          'stages:',
-          '  - test',
-          '  - coverage',
-          '',
-          'default:',
-          '  tags:',
-          '    - self-hosted',
-          '',
+      tox_lines = [
           'tox:',
           '  stage: test',
           tox_image_line,
           '  parallel:',
           '    matrix:',
           f'      - PYTHON_VERSION: {versions_yaml}',
-          '  before_script:',
-          *tox_before_script,
+      ]
+      if tox_before_script:
+          tox_lines += ['  before_script:', *tox_before_script]
+      tox_lines += [
           '  script:',
           "    - tox -e $(python3 -c \"import sys; v=sys.version_info; print(f'py{v.major}{v.minor}')\")",
           '  artifacts:',
@@ -174,6 +190,18 @@
           '    when: always',
           '  rules:',
           '    - when: always',
+      ]
+
+      lines = [
+          'stages:',
+          '  - test',
+          '  - coverage',
+          '',
+          'default:',
+          '  tags:',
+          '    - self-hosted',
+          '',
+          *tox_lines,
           '',
           *diff_cover_lines,
       ]
