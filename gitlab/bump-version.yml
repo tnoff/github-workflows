@@ -56,7 +56,11 @@
   # running first means the current pipeline doesn't burn time on stale
   # validation/tests before the bump fires.
   stage: .pre
-  image: docker.io/library/alpine:3
+  # Pre-baked CI utility image (git + curl + jq + bash) provisioned as the
+  # CI_ALPINE_UTILS_IMAGE group variable in terraform/infra. The before_script
+  # install is a no-op fallback so the template still works on a plain alpine:3
+  # (or any runtime where the var resolves to a toolless base).
+  image: $CI_ALPINE_UTILS_IMAGE
   variables:
     GIT_DEPTH: 0
     VERSION_FILE: "VERSION"
@@ -66,7 +70,7 @@
     BUMP_CHANGELOG: ""
     CHANGELOG_FILE: "CHANGELOG.md"
   before_script:
-    - apk add --no-cache git jq
+    - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
   script:
     - |
       BRANCH="${COMPARE_BRANCH:-${CI_DEFAULT_BRANCH:-main}}"

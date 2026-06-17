@@ -47,7 +47,9 @@
 # shouldn't fail the producer pipeline (the image is already pushed).
 
 .trigger-bump:
-  image: docker.io/library/alpine:3
+  # Pre-baked ci-alpine-utils image (git + curl + jq + bash); see CI_ALPINE_UTILS_IMAGE
+  # group var. before_script install is a no-op fallback on the pre-baked image.
+  image: $CI_ALPINE_UTILS_IMAGE
   stage: build
   allow_failure: true
   variables:
@@ -55,7 +57,7 @@
     TARGET_TRIGGER_TOKEN: $DOCKER_APPS_TRIGGER_TOKEN
     TARGET_REF: main
   before_script:
-    - apk add --no-cache curl
+    - command -v curl >/dev/null 2>&1 || apk add --no-cache curl
   script:
     - |
       err() { echo "$1" >&2; exit 1; }
