@@ -12,12 +12,18 @@ stages:
 
 pre-commit:
   stage: validate
-  image: docker.io/library/python:3.14-slim
+  # Pre-baked ci-pre-commit image (python + git + pre-commit); see the
+  # CI_PRE_COMMIT_IMAGE group var. before_script install is an idempotent
+  # fallback so this still works on a plain python image.
+  image: $CI_PRE_COMMIT_IMAGE
   tags:
     - self-hosted
   before_script:
-    - apt-get update -qq && apt-get install -y -qq git
-    - pip install pre-commit
+    - |
+      if ! command -v git >/dev/null 2>&1 || ! command -v pre-commit >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq git
+        pip install pre-commit
+      fi
   script:
     - pre-commit run --all-files
   rules:
