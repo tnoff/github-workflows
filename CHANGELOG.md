@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.49] - 2026-06-25
+
+### Added
+
+- `gitlab/tox-pipeline.yml`: the generated child pipeline now writes `/etc/pip.conf` from `PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` / `PIP_TRUSTED_HOST` before running tox, so pip (including inside tox-created venvs, where env passthrough is unreliable) resolves through a configured index — the Nexus pull-through cache. **With automatic fallback:** pip has no native index failover, so the job TCP-probes `PIP_INDEX_URL` at start — if Nexus is reachable it's used (with pypi as extra-index for fresh releases), and if not, pip.conf points at `PIP_EXTRA_INDEX_URL` (pypi.org) instead, so a Nexus outage degrades CI to "no cache", never "no installs". The probe uses only `python3` (no `curl` dependency). **No-op until `PIP_INDEX_URL` is set**, so this is inert for every consumer until the Nexus CI cutover flips that variable. Applies to both the tox matrix job and the diff-cover job, in both the slim-image and `TOX_BASE_IMAGE` paths.
+
 ## [0.0.47] - 2026-06-01
 
 ### Added
