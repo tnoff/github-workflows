@@ -1,0 +1,100 @@
+# Reusable GitLab CI template for pruning stale automation branches.
+#
+# Image-bump and Renovate jobs push throwaway branches (`bump/*`,
+# `renovate/*`). Their MRs set remove_source_branch, but that only
+# deletes the branch on MERGE — superseded or closed MRs leave the
+# branch behind, so they pile up indefinitely. This job deletes
+# branches that match an allowlist pattern, are old enough, and are
+# NOT the source branch of any open MR. Anything outside the pattern
+# (hand-made feature branches, protected/default) is never touched.
+#
+# Safe by construction: deleting a `bump/*` or `renovate/*` branch is
+# reversible — the bump job re-pushes on the next image, and Renovate
+# recreates the branch if the dependency is still outstanding.
+#
+# Run it on a scheduled pipeline (reuse the same schedule as Renovate).
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/branch-cleanup.yml'
+#
+#   branch-cleanup:
+#     extends: .branch-cleanup
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == "schedule"
+#
+# Required CI variable (set under Settings -> CI/CD -> Variables):
+#   CLEANUP_TOKEN   GitLab PAT with api scope — lists and deletes
+#                   branches. Defaults to RENOVATE_TOKEN, which already
+#                   carries api scope.
+#
+# Tunable variables (override per job):
+#   CLEANUP_BRANCH_PATTERN   ERE of branch names eligible for deletion.
+#                            Default '^(bump|renovate)/'.
+#   CLEANUP_AGE_DAYS         Minimum age in days (by last commit) before
+#                            a branch is eligible. Default 30.
+#   DRY_RUN                  "true" logs candidates without deleting.
+#                            Default "true" — set "false" to delete.
+#
+.branch-cleanup:
+  image: docker.io/library/alpine:3
+  variables:
+    CLEANUP_TOKEN: $RENOVATE_TOKEN
+    CLEANUP_BRANCH_PATTERN: '^(bump|renovate)/'
+    CLEANUP_AGE_DAYS: "30"
+    DRY_RUN: "true"
+  before_script:
+    - command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache curl jq
+  script:
+    - |
+      set -eu
+      [ -n "${CLEANUP_TOKEN:-}" ] || { echo "CLEANUP_TOKEN not set" >&2; exit 1; }
+      api="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+      hdr="PRIVATE-TOKEN: $CLEANUP_TOKEN"
+      cutoff=$(( $(date +%s) - CLEANUP_AGE_DAYS * 86400 ))
+      echo "branch-cleanup: pattern=$CLEANUP_BRANCH_PATTERN age>=${CLEANUP_AGE_DAYS}d dry_run=$DRY_RUN"
+
+      # Collect the source branch of every OPEN MR — never delete these.
+      open_mrs=$(mktemp)
+      page=1
+      while :; do
+        body=$(curl -fsS -H "$hdr" "$api/merge_requests?state=opened&per_page=100&page=$page")
+        [ "$(printf '%s' "$body" | jq 'length')" -eq 0 ] && break
+        printf '%s' "$body" | jq -r '.[].source_branch' >> "$open_mrs"
+        page=$((page + 1))
+      done
+
+      # Walk every branch and apply the predicate.
+      page=1
+      while :; do
+        body=$(curl -fsS -H "$hdr" "$api/repository/branches?per_page=100&page=$page")
+        [ "$(printf '%s' "$body" | jq 'length')" -eq 0 ] && break
+        # name <TAB> protected <TAB> default <TAB> last-commit-epoch
+        rows=$(printf '%s' "$body" | jq -r '.[]
+          | [ .name, (.protected | tostring), (.default | tostring),
+              (.commit.committed_date | sub("\\.[0-9]+"; "") | sub("\\+00:00"; "Z")
+               | fromdateiso8601 | tostring) ] | @tsv')
+        printf '%s\n' "$rows" | while IFS="$(printf '\t')" read -r name prot def epoch; do
+          [ -n "$name" ] || continue
+          if [ "$prot" = "true" ] || [ "$def" = "true" ]; then continue; fi
+          printf '%s' "$name" | grep -Eq "$CLEANUP_BRANCH_PATTERN" || continue
+          if grep -Fxq "$name" "$open_mrs"; then
+            echo "keep (open MR): $name"
+            continue
+          fi
+          [ "$epoch" -ge "$cutoff" ] && continue
+          if [ "$DRY_RUN" = "false" ]; then
+            enc=$(printf '%s' "$name" | jq -sRr @uri)
+            curl -fsS -X DELETE -H "$hdr" "$api/repository/branches/$enc" >/dev/null
+            echo "deleted: $name"
+          else
+            echo "would delete: $name"
+          fi
+        done
+        page=$((page + 1))
+      done
+      rm -f "$open_mrs"
+      echo "branch-cleanup: done"
