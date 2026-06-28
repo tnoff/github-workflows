@@ -73,16 +73,29 @@
         body=$(curl -fsS -H "$hdr" "$api/repository/branches?per_page=100&page=$page")
         [ "$(printf '%s' "$body" | jq 'length')" -eq 0 ] && break
         # name <TAB> protected <TAB> default <TAB> last-commit-epoch
+        # committed_date carries the committer's offset (e.g. ...-07:00),
+        # not always UTC — normalize to a real epoch, offset-aware. An
+        # unparseable date yields "" and the branch is kept (never deleted
+        # on a date we can't read).
         rows=$(printf '%s' "$body" | jq -r '.[]
           | [ .name, (.protected | tostring), (.default | tostring),
-              (.commit.committed_date | sub("\\.[0-9]+"; "") | sub("\\+00:00"; "Z")
-               | fromdateiso8601 | tostring) ] | @tsv')
+              ( try ( .commit.committed_date
+                      | sub("\\.[0-9]+"; "") | sub("Z$"; "+00:00")
+                      | capture("^(?<n>[0-9-]+T[0-9:]+)(?<s>[+-])(?<oh>[0-9]{2}):(?<om>[0-9]{2})$")
+                      | ((.n + "Z" | fromdateiso8601)
+                         - ((if .s == "-" then -1 else 1 end)
+                            * ((.oh | tonumber) * 3600 + (.om | tonumber) * 60))) )
+                catch "" | tostring ) ] | @tsv')
         printf '%s\n' "$rows" | while IFS="$(printf '\t')" read -r name prot def epoch; do
           [ -n "$name" ] || continue
           if [ "$prot" = "true" ] || [ "$def" = "true" ]; then continue; fi
           printf '%s' "$name" | grep -Eq "$CLEANUP_BRANCH_PATTERN" || continue
           if grep -Fxq "$name" "$open_mrs"; then
             echo "keep (open MR): $name"
+            continue
+          fi
+          if [ -z "$epoch" ]; then
+            echo "keep (unparseable date): $name"
             continue
           fi
           [ "$epoch" -ge "$cutoff" ] && continue
