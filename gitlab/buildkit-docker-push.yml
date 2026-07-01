@@ -3,6 +3,12 @@
 # artifact so downstream jobs (e.g. .trigger-bump) can pick up the
 # reference without re-decoding the OCI_*_64 CI variables.
 #
+# After pushing, the job re-resolves every tag it claimed to push (via
+# skopeo) and fails if any is absent — buildkit can exit 0 without actually
+# writing a tag when the manifest digest already exists in the repo, which
+# otherwise lets .trigger-bump pin a tag that pull-side reports as
+# "manifest unknown".
+#
 # Replaces the dind-based gitlab/docker-push.yml (removed in 0.0.44),
 # which had zero consumers — all six in-tree producers were running their
 # own inline buildkit-via-cluster-service jobs that this template
@@ -147,6 +153,29 @@
         $BUILD_ARGS \
         $CACHE_ARGS \
         --output type=image,name="$IMAGE":"$PRIMARY_TAG",push=true
+    - |
+      # Verify each pushed tag actually resolves in the registry before a
+      # downstream .trigger-bump job pins it. buildkit prints
+      # "pushing manifest ... done" and exits 0 even when it short-circuits
+      # the tag PUT because the manifest digest already exists in the repo
+      # (e.g. a Renovate dep bump that produces a byte-identical image) —
+      # leaving the :<sha> tag unwritten, so the Flux rollout that consumes
+      # the pin wedges on ErrImagePull "manifest unknown" while CI stays
+      # green. Re-resolve every tag we claimed to push and fail loudly so
+      # notify-tag-failure fires instead of pinning a phantom tag.
+      # (regression: mirror :47048e52 stalled the apps Kustomization, 2026-06-30)
+      apk add --no-cache skopeo >/dev/null 2>&1 \
+        || { echo "ERROR: could not install skopeo to verify the push" >&2; exit 1; }
+      for VERIFY_TAG in "$SECONDARY_TAG" "$PRIMARY_TAG"; do
+        echo "verifying $IMAGE:$VERIFY_TAG resolves in registry..."
+        if ! skopeo inspect --no-tags --authfile "$DOCKER_CONFIG/config.json" \
+             "docker://$IMAGE:$VERIFY_TAG" >/dev/null; then
+          echo "ERROR: $IMAGE:$VERIFY_TAG did not resolve after push —" \
+               "buildkit reported the push succeeded but the tag is absent" >&2
+          exit 1
+        fi
+      done
+      echo "push verification ok: :$SECONDARY_TAG and :$PRIMARY_TAG both resolve"
   artifacts:
     reports:
       dotenv: build.env
