@@ -151,52 +151,6 @@
               '    - pip install diff-cover',
           ]
 
-      # Point pip at the Nexus pull-through cache when CI provides PIP_INDEX_URL,
-      # but FALL BACK to PIP_EXTRA_INDEX_URL (pypi.org) when Nexus is unreachable.
-      # pip has no native index failover, so we TCP-probe Nexus at job start and
-      # choose the index: reachable -> Nexus (with pypi as extra-index for fresh
-      # releases); unreachable -> pypi.org direct, so a Nexus outage degrades CI to
-      # "no cache", never "no installs". Written to /etc/pip.conf (not just env) so
-      # it also applies to pip inside tox venvs. The probe uses only python3 (always
-      # present in a Python image; curl is not in python:slim). NO-OP until
-      # PIP_INDEX_URL is set, so the cutover is a CI-var flip, not a template edit.
-      # Each list entry is one line of the generated child pipeline. The long
-      # shell lines are split across adjacent string literals (one output line,
-      # but each source line stays under the 120-char yamllint limit).
-      pip_conf_lines = [
-          '    - |',
-          '      if [ -n "$PIP_INDEX_URL" ]; then',
-          (
-              '        if python3 -c "import os,socket; '
-              'from urllib.parse import urlsplit as s; '
-              "p=s(os.environ['PIP_INDEX_URL']); "
-              'socket.create_connection((p.hostname, p.port or 80), '
-              'timeout=8).close()" 2>/dev/null; then'
-          ),
-          (
-              '          { echo "[global]"; echo "index-url = $PIP_INDEX_URL"; '
-              '[ -n "$PIP_EXTRA_INDEX_URL" ] && '
-              'echo "extra-index-url = $PIP_EXTRA_INDEX_URL"; '
-              '[ -n "$PIP_TRUSTED_HOST" ] && '
-              'echo "trusted-host = $PIP_TRUSTED_HOST"; } > /etc/pip.conf'
-          ),
-          '          echo "pip: using Nexus cache ($PIP_INDEX_URL)"',
-          '        else',
-          (
-              '          echo "pip: Nexus unreachable - falling back to '
-              '${PIP_EXTRA_INDEX_URL:-pypi.org}"'
-          ),
-          (
-              '          { [ -n "$PIP_EXTRA_INDEX_URL" ] && '
-              '{ echo "[global]"; echo "index-url = $PIP_EXTRA_INDEX_URL"; } '
-              '> /etc/pip.conf; } || true'
-          ),
-          '        fi',
-          '      fi',
-      ]
-      tox_before_script = pip_conf_lines + tox_before_script
-      diff_before_script = pip_conf_lines + diff_before_script
-
       diff_cover_lines = [
           'diff-cover:',
           '  stage: coverage',
