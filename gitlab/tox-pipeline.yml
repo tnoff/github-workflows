@@ -57,6 +57,14 @@
 # When TOX_BASE_IMAGE is set, TOX_EXTRA_APT is ignored — the base image
 # is the source of truth for system deps.
 #
+# When TOX_BASE_IMAGE is set AND the group CI variable TOX_CACHE_BUCKET is
+# non-empty, the generated tox jobs also cache the `.tox/` venv to that OCI
+# Object Storage bucket (S3), keyed on a hash of pyproject.toml + tox.ini per
+# Python minor. On a hit tox skips the reinstall; the venv is saved only on a
+# green tox run. Uses the reused buildkit-cache AWS_* creds already injected
+# into job pods + the awscli/zstd baked into ci-base-images. No-op when
+# TOX_CACHE_BUCKET is unset. See docs projects/ci-perf.md scope #9.
+#
 # Optional variables on `.tox-generate` (defaults shown):
 #   TOX_EXTRA_APT             (empty)        Extra apt packages for the tox
 #                                              child-pipeline job (appended
@@ -126,14 +134,53 @@
       fail_under = os.environ.get('DIFF_COVER_FAIL_UNDER', '100')
       compare_branch = os.environ.get('DIFF_COVER_COMPARE_BRANCH', 'origin/main')
 
+      # .tox venv cache (scope #9). Emitted only in the TOX_BASE_IMAGE branch
+      # (needs awscli + zstd from ci-base-images) and gated at runtime on the
+      # TOX_CACHE_BUCKET group var, so it's a no-op until that var is set.
+      # Reuses the buildkit-cache AWS_* creds already in every job pod. The
+      # key hashes pyproject.toml + tox.ini per Python minor, so a dep bump
+      # misses cleanly. awscli auto-selects path-style for the underscore
+      # bucket name. Restore runs in before_script; save runs at the end of
+      # script, so a red tox run never poisons the cache.
+      # Lines kept < 120 chars for this repo's yamllint (helper vars +
+      # a shell line-continuation); the generated child YAML isn't linted.
+      cache_restore = [
+          '    - |',
+          '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
+          '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
+          '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
+          '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
+          '        if aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp "$obj" - 2>/dev/null \\',
+          '             | zstd -d 2>/dev/null | tar -x 2>/dev/null; then',
+          '          echo "tox cache: HIT ${TOX_CACHE_KEY}"',
+          '        else',
+          '          echo "tox cache: MISS ${TOX_CACHE_KEY}"; rm -rf .tox',
+          '        fi',
+          '      fi',
+      ]
+      cache_save = [
+          '    - |',
+          '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
+          '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
+          '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
+          '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
+          '        if tar -c .tox | zstd -q | aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp - "$obj"; then',
+          '          echo "tox cache: saved ${TOX_CACHE_KEY}"',
+          '        else',
+          '          echo "tox cache: save failed (non-fatal)"',
+          '        fi',
+          '      fi',
+      ]
+
       tox_apt = ('git ' + extra_apt).strip()
 
       if base_image:
           tox_image_line = f'  image: {base_image}'
-          # TOX_BASE_IMAGE is expected to carry tox + diff-cover (see
-          # ci-base-images/python/Dockerfile). Drop before_script entirely;
-          # the consumer's responsibility to point at an image that has tox.
-          tox_before_script = []
+          # TOX_BASE_IMAGE is expected to carry tox + diff-cover + awscli +
+          # zstd (see ci-base-images/python/Dockerfile). No apt/pip install
+          # needed; before_script only restores the .tox/ venv cache (itself a
+          # no-op unless the TOX_CACHE_BUCKET group var is set).
+          tox_before_script = list(cache_restore)
           # diff-cover runs only on the coverage stage against `latest`, so
           # ${PYTHON_VERSION} substitution happens here (not via GitLab's
           # parallel-matrix expansion).
@@ -180,9 +227,15 @@
       ]
       if tox_before_script:
           tox_lines += ['  before_script:', *tox_before_script]
-      tox_lines += [
-          '  script:',
+      tox_script = [
           "    - tox -e $(python3 -c \"import sys; v=sys.version_info; print(f'py{v.major}{v.minor}')\")",
+      ]
+      # Save the venv only after a green tox run (script stops on tox failure),
+      # so a broken/partial venv never gets cached.
+      if base_image:
+          tox_script += cache_save
+      tox_lines += ['  script:', *tox_script]
+      tox_lines += [
           '  artifacts:',
           '    paths:',
           '      - coverage.xml',
