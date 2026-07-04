@@ -12,6 +12,11 @@
 # dotenv artifact (`build.env`), and the trigger job must `needs:` that
 # job with `artifacts: true` so $IMAGE is in scope here.
 #
+# The trigger also forwards this repo's project ID + commit SHA
+# (SOURCE_PROJECT_ID / SOURCE_SHA) so the downstream bump-image-pin job can
+# resolve and link back to the MR that produced the image. Both are derived
+# automatically from predefined CI vars — no per-consumer config needed.
+#
 # Usage in consumer repo's .gitlab-ci.yml:
 #
 #   include:
@@ -66,12 +71,18 @@
       [ -n "$TARGET_TRIGGER_TOKEN" ] || err "TARGET_TRIGGER_TOKEN not set (default: \$DOCKER_APPS_TRIGGER_TOKEN)"
       [ -n "$IMAGE" ]                || err "IMAGE not set — upstream docker-push job must emit build.env"
 
+      # SOURCE_PROJECT_ID + SOURCE_SHA let the downstream bump-image-pin job
+      # resolve the merge request that produced this image (commit -> MR API)
+      # and link back to it from the auto-generated bump MR. Passing the full
+      # $CI_COMMIT_SHA (not the short tag) keeps that lookup unambiguous.
       curl -sS --fail-with-body -X POST \
         --form "token=$TARGET_TRIGGER_TOKEN" \
         --form "ref=$TARGET_REF" \
         --form "variables[BUMP_SOURCE]=$BUMP_SOURCE" \
         --form "variables[IMAGE_NAME]=$IMAGE" \
         --form "variables[IMAGE_TAG]=$CI_COMMIT_SHORT_SHA" \
+        --form "variables[SOURCE_PROJECT_ID]=$CI_PROJECT_ID" \
+        --form "variables[SOURCE_SHA]=$CI_COMMIT_SHA" \
         "$CI_API_V4_URL/projects/$TARGET_PROJECT_ID/trigger/pipeline"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
