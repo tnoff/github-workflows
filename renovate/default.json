@@ -5,6 +5,7 @@
   "dependencyDashboard": false,
   "rebaseWhen": "behind-base-branch",
   "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
   "packageRules": [
     {
       "description": "Keep .gitlab-ci.yml include refs SHA-pinned to main via the custom regex manager; disable the built-in gitlabci-include manager so it never proposes tag bumps (e.g. v0.0.48) for security.",
