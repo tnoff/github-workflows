@@ -5,13 +5,14 @@ include:
   - local: '/gitlab/trufflehog.yml'
 
 stages:
-  - validate
-  - tag
+  - pr-check
+  - test
+  - push
   - notify
   - renovate
 
-pre-commit:
-  stage: validate
+"pr-check:pre-commit":
+  stage: pr-check
   # Pre-baked ci-pre-commit image (python + git + pre-commit); see the
   # CI_PRE_COMMIT_IMAGE group var. before_script install is an idempotent
   # fallback so this still works on a plain python image.
@@ -32,9 +33,9 @@ pre-commit:
       when: manual
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
-trufflehog:
+"pr-check:secrets":
   extends: .trufflehog
-  stage: validate
+  stage: pr-check
   tags:
     - self-hosted
   rules:
@@ -43,16 +44,16 @@ trufflehog:
       when: manual
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
-tag-build:
+"push:tag":
   extends: .tag
-  stage: tag
+  stage: push
   tags:
     - self-hosted
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
       when: on_success
 
-notify-mr:
+"notify:mr-opened":
   extends: .discord-notify
   stage: notify
   needs: []
@@ -68,10 +69,10 @@ notify-mr:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: always
 
-notify-tag-failure:
+"notify:tag-failure":
   extends: .discord-notify
   stage: notify
-  needs: [tag-build]
+  needs: ["push:tag"]
   tags:
     - self-hosted
   variables:
@@ -81,7 +82,7 @@ notify-tag-failure:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
       when: on_failure
 
-notify-merged:
+"notify:merged":
   extends: .discord-notify
   stage: notify
   needs: []
