@@ -13,20 +13,21 @@
 #       ref: main
 #       file: '/gitlab/tox-pipeline.yml'
 #
-#   tox-generate:
+#   test:tox-generate:
 #     extends: .tox-generate
 #
-#   tox-pipeline:
+#   test:tox:
 #     extends: .tox-pipeline
 #
-# The `tox-pipeline` job's `needs: [tox-generate]` is baked into the
-# template — the consumer's matching job MUST be named `tox-generate`.
+# The `.tox-pipeline` job's `needs: [test:tox-generate]` and its
+# `trigger.include.job` are baked into the template — the consumer's
+# generate job MUST be named `test:tox-generate`.
 #
 # For Python tests with extra system dependencies (e.g. discord-bot needs
 # `sqlite3 ffmpeg`), set TOX_EXTRA_APT on the generate job. `git` is
 # always installed; the extras are appended.
 #
-#   tox-generate:
+#   test:tox-generate:
 #     extends: .tox-generate
 #     variables:
 #       TOX_EXTRA_APT: 'sqlite3 ffmpeg'
@@ -39,7 +40,7 @@
 # to template per matrix entry (diff-cover substitutes it with the
 # latest minor):
 #
-#   tox-generate:
+#   test:tox-generate:
 #     extends: .tox-generate
 #     variables:
 #       TOX_BASE_IMAGE: '${CI_BASE_IMAGE_PATH}:${PYTHON_VERSION}'
@@ -49,7 +50,7 @@
 # `pip install tox`. Unlike TOX_BASE_IMAGE, this is a single concrete
 # tag (the parent runs once, not per matrix entry):
 #
-#   tox-generate:
+#   test:tox-generate:
 #     extends: .tox-generate
 #     variables:
 #       TOX_GENERATE_IMAGE: '${CI_BASE_IMAGE_PATH}:3.14'
@@ -274,11 +275,11 @@
 
 .tox-pipeline:
   stage: test
-  needs: [tox-generate]
+  needs: [test:tox-generate]
   trigger:
     include:
       - artifact: tox-pipeline.yml
-        job: tox-generate
+        job: test:tox-generate
     strategy: depend
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
