@@ -16,7 +16,8 @@
         "tox",
         "pylint",
         "pylint-pydantic",
-        "bandit"
+        "bandit",
+        "mock"
       ],
       "groupName": "test dependencies",
       "additionalBranchPrefix": "test-",
@@ -37,7 +38,8 @@
         "!tox",
         "!pylint",
         "!pylint-pydantic",
-        "!bandit"
+        "!bandit",
+        "!mock"
       ],
       "additionalBranchPrefix": "dev-"
     }
