@@ -40,6 +40,18 @@
 #                            The concurrency cap keeps memory predictable on
 #                            larger images; raise it if you need throughput
 #                            and have headroom.
+#   TRUFFLEHOG_EXCLUDE_PATHS Comma-separated glob patterns of image paths to
+#                            skip (trufflehog `docker --exclude-paths`). Default
+#                            excludes vendored Python deps
+#                            (**/site-packages/**,**/dist-packages/**): they
+#                            dominate the file/chunk count and secret-
+#                            verification time but are third-party code, not
+#                            ours. TRADE-OFF: dependency code is no longer
+#                            scanned for embedded secrets — acceptable here
+#                            because our own source is scanned by the companion
+#                            `.trufflehog` (repo) job. Set to "" to scan
+#                            everything. Globs use gobwas syntax with no path
+#                            separator, so `*` matches across `/`.
 
 .trufflehog-image:
   # Pre-baked ci-trufflehog image (alpine + pinned trufflehog binary); see the
@@ -50,6 +62,7 @@
     TRUFFLEHOG_IMAGE_TARBALL: ""
     TRUFFLEHOG_VERSION: ""
     TRUFFLEHOG_EXTRA_ARGS: "--only-verified --fail --concurrency=2"
+    TRUFFLEHOG_EXCLUDE_PATHS: "**/site-packages/**,**/dist-packages/**"
   before_script:
     # The image already ships trufflehog. Install only as a fallback (a
     # non-prebaked runner where the binary is absent) or when TRUFFLEHOG_VERSION
@@ -73,4 +86,12 @@
         exit 1
       fi
       echo "Scanning $TRUFFLEHOG_IMAGE_TARBALL"
-      trufflehog docker --image "file://$TRUFFLEHOG_IMAGE_TARBALL" $TRUFFLEHOG_EXTRA_ARGS
+      # --exclude-paths must be quoted: the glob contains `*`, which the shell
+      # would otherwise pathname-expand against the job's working directory.
+      # TRUFFLEHOG_EXTRA_ARGS stays unquoted so its flags word-split.
+      if [ -n "$TRUFFLEHOG_EXCLUDE_PATHS" ]; then
+        trufflehog docker --image "file://$TRUFFLEHOG_IMAGE_TARBALL" \
+          --exclude-paths="$TRUFFLEHOG_EXCLUDE_PATHS" $TRUFFLEHOG_EXTRA_ARGS
+      else
+        trufflehog docker --image "file://$TRUFFLEHOG_IMAGE_TARBALL" $TRUFFLEHOG_EXTRA_ARGS
+      fi
