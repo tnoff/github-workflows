@@ -143,11 +143,17 @@
       # misses cleanly. awscli auto-selects path-style for the underscore
       # bucket name. Restore runs in before_script; save runs at the end of
       # script, so a red tox run never poisons the cache.
+      # AWS_*_CHECKSUM_CALCULATION=when_required disables awscli v2's default
+      # integrity checksums, which OCI's S3-compat endpoint rejects on
+      # (multipart) uploads with SignatureDoesNotMatch — same fix buildkit
+      # v0.31 needed against this bucket. Without it every save fails.
       # Lines kept < 120 chars for this repo's yamllint (helper vars +
       # a shell line-continuation); the generated child YAML isn't linted.
       cache_restore = [
           '    - |',
           '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
+          '        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required',
+          '        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required',
           '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
           '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
           '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
@@ -162,6 +168,8 @@
       cache_save = [
           '    - |',
           '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
+          '        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required',
+          '        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required',
           '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
           '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
           '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
