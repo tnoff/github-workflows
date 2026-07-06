@@ -18,6 +18,7 @@
         "pylint-pydantic",
         "bandit"
       ],
+      "groupName": "test dependencies",
       "additionalBranchPrefix": "test-",
       "automerge": true
     },
