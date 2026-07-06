@@ -140,13 +140,16 @@
       # TOX_CACHE_BUCKET group var, so it's a no-op until that var is set.
       # Reuses the buildkit-cache AWS_* creds already in every job pod. The
       # key hashes pyproject.toml + tox.ini per Python minor, so a dep bump
-      # misses cleanly. awscli auto-selects path-style for the underscore
-      # bucket name. Restore runs in before_script; save runs at the end of
-      # script, so a red tox run never poisons the cache.
-      # AWS_*_CHECKSUM_CALCULATION=when_required disables awscli v2's default
-      # integrity checksums, which OCI's S3-compat endpoint rejects on
-      # (multipart) uploads with SignatureDoesNotMatch — same fix buildkit
-      # v0.31 needed against this bucket. Without it every save fails.
+      # misses cleanly. Restore runs in before_script; save runs at the end
+      # of script, so a red tox run never poisons the cache.
+      # The tarball is staged to a FILE, then uploaded — NOT streamed from
+      # stdin. A streamed `aws s3 cp - s3://…` forces chunked/streaming
+      # payload signing, which OCI's S3-compat endpoint rejects with
+      # SignatureDoesNotMatch on CreateMultipartUpload; a known-length file
+      # signs per-part like buildkit's (working) multipart export does.
+      # AWS_S3_ADDRESSING_STYLE=path is required for the underscore bucket
+      # name; AWS_*_CHECKSUM_CALCULATION=when_required drops awscli v2's
+      # default integrity checksums (the buildkit-v0.31 OCI remedy).
       # Lines kept < 120 chars for this repo's yamllint (helper vars +
       # a shell line-continuation); the generated child YAML isn't linted.
       cache_restore = [
@@ -154,15 +157,17 @@
           '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
           '        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required',
           '        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required',
+          '        export AWS_S3_ADDRESSING_STYLE=path',
           '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
           '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
           '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
-          '        if aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp "$obj" - 2>/dev/null \\',
-          '             | zstd -d 2>/dev/null | tar -x 2>/dev/null; then',
+          '        if aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp "$obj" /tmp/tox-cache.tar.zst 2>/dev/null \\',
+          '             && zstd -dq -c /tmp/tox-cache.tar.zst 2>/dev/null | tar -x 2>/dev/null; then',
           '          echo "tox cache: HIT ${TOX_CACHE_KEY}"',
           '        else',
           '          echo "tox cache: MISS ${TOX_CACHE_KEY}"; rm -rf .tox',
           '        fi',
+          '        rm -f /tmp/tox-cache.tar.zst',
           '      fi',
       ]
       cache_save = [
@@ -170,14 +175,17 @@
           '      if [ -n "$TOX_CACHE_BUCKET" ]; then',
           '        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required',
           '        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required',
+          '        export AWS_S3_ADDRESSING_STYLE=path',
           '        TOX_CACHE_HASH=$(cat pyproject.toml tox.ini 2>/dev/null | sha256sum | cut -c1-16)',
           '        TOX_CACHE_KEY="tox-${CI_PROJECT_NAME}-${PYTHON_VERSION}-${TOX_CACHE_HASH}"',
           '        obj="s3://${TOX_CACHE_BUCKET}/${TOX_CACHE_KEY}.tar.zst"',
-          '        if tar -c .tox | zstd -q | aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp - "$obj"; then',
+          '        if tar -c .tox | zstd -q -o /tmp/tox-cache.tar.zst \\',
+          '             && aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp /tmp/tox-cache.tar.zst "$obj"; then',
           '          echo "tox cache: saved ${TOX_CACHE_KEY}"',
           '        else',
           '          echo "tox cache: save failed (non-fatal)"',
           '        fi',
+          '        rm -f /tmp/tox-cache.tar.zst',
           '      fi',
       ]
 
