@@ -67,6 +67,14 @@
 #                                     template uses, so MR build-checks
 #                                     populate the cache that this main-branch
 #                                     push reads.
+#   PUSH_EXPORT_CACHE   false        When 'true', also --export-cache mode=max
+#                                     on the push build(s). Default false: the
+#                                     MR build-check for the same commit already
+#                                     seeded the cache under CACHE_NAME, so
+#                                     re-exporting here (twice — once per tag)
+#                                     just burns buildkitd CPU. Set true only
+#                                     for a producer whose push builds a variant
+#                                     build-check skips.
 #
 # S3 cache is opt-in by env: when BUILDKIT_CACHE_BUCKET is set (the OKE
 # runner injects it from the `buildkit-s3-creds` secret), every build
@@ -93,6 +101,7 @@
     TAG_OVERRIDE: ''
     DOCKER_CONFIG: /tmp/.docker
     CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
+    PUSH_EXPORT_CACHE: 'false'
   before_script:
     - mkdir -p "$DOCKER_CONFIG"
     - |
@@ -130,8 +139,18 @@
       CACHE_ARGS=""
       if [ -n "${BUILDKIT_CACHE_BUCKET:-}" ]; then
         S3_COMMON="type=s3,region=${AWS_REGION},endpoint_url=${AWS_ENDPOINT_URL_S3},bucket=${BUILDKIT_CACHE_BUCKET},name=${CACHE_NAME}"
-        CACHE_ARGS="--import-cache ${S3_COMMON} --export-cache ${S3_COMMON},mode=max"
-        echo "buildkit S3 cache enabled: name=${CACHE_NAME} bucket=${BUILDKIT_CACHE_BUCKET}"
+        # Import-only by default. The MR-time .buildkit-build-check for this
+        # same commit already exported (mode=max) to the identical CACHE_NAME,
+        # so re-exporting here is pure-redundant work — and this job exports
+        # TWICE (once per tag build below), burning buildkitd CPU on the
+        # saturated ci pool for zero cache benefit. Set PUSH_EXPORT_CACHE=true
+        # for a producer whose push builds a Dockerfile/variant build-check
+        # does not exercise (e.g. ci-base-images' extra :3.X minors).
+        CACHE_ARGS="--import-cache ${S3_COMMON}"
+        if [ "${PUSH_EXPORT_CACHE:-false}" = "true" ]; then
+          CACHE_ARGS="${CACHE_ARGS} --export-cache ${S3_COMMON},mode=max"
+        fi
+        echo "buildkit S3 cache: name=${CACHE_NAME} import=on export=${PUSH_EXPORT_CACHE:-false}"
       else
         echo "BUILDKIT_CACHE_BUCKET not set — building without remote cache"
       fi
