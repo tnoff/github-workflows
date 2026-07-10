@@ -20,6 +20,21 @@
 #         when: manual
 #       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
 #         when: on_success
+#
+# Optional variables:
+#   VERSION_FILE        Path to the version file (default: ./VERSION)
+#   VERSION_FILE_TYPE   'plain' or 'json' (default: plain)
+#   VERSION_JSON_KEY    Key holding the version when VERSION_FILE_TYPE=json (default: version)
+#   GATE_ON_FRAGMENTS   Set to "true" on repos wired for /gitlab/assemble-changelog.yml.
+#                       When changelog fragments are still pending under CHANGELOG_DIR,
+#                       this job defers (TAG_CREATED=false) so assemble-changelog folds +
+#                       pushes first; the fold push then fires a follow-up pipeline where
+#                       CHANGELOG_DIR is empty and tag/release run against the assembled
+#                       CHANGELOG. REQUIRES GITLAB_PUSH_TOKEN on the repo — under
+#                       CI_JOB_TOKEN the fold push does not trigger the follow-up pipeline,
+#                       so tag/release would never fire and no release is cut. (default: unset)
+#   CHANGELOG_DIR       Directory of unassembled fragments (default: changelog.d). Only
+#                       consulted when GATE_ON_FRAGMENTS=true.
 
 .tag:
   # Pre-baked ci-alpine-utils image (git + curl + jq + bash); see CI_ALPINE_UTILS_IMAGE
@@ -29,10 +44,26 @@
     VERSION_FILE: './VERSION'
     VERSION_FILE_TYPE: 'plain'
     VERSION_JSON_KEY: 'version'
+    GATE_ON_FRAGMENTS: ''
+    CHANGELOG_DIR: 'changelog.d'
   before_script:
     - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
   script:
     - |
+      # Option-a gate for the changelog-fragment flow: if fragments are still
+      # pending under CHANGELOG_DIR, this is the PRE-fold pipeline. Defer tagging
+      # (TAG_CREATED=false, so .release skips too) and let assemble-changelog fold
+      # + push first. That push (via GITLAB_PUSH_TOKEN — mandatory here) triggers a
+      # follow-up pipeline where CHANGELOG_DIR is empty, this gate passes, and
+      # tag/release run against the assembled CHANGELOG. Inert when unset, so repos
+      # not using fragments are unaffected.
+      if [ "$GATE_ON_FRAGMENTS" = "true" ] && ls "$CHANGELOG_DIR"/*.md >/dev/null 2>&1; then
+        echo "Changelog fragments pending in $CHANGELOG_DIR — deferring tag to the post-assemble pipeline."
+        echo "TAG_CREATED=false" >> build.env
+        echo "TAG_EXISTS=false" >> build.env
+        exit 0
+      fi
+
       if [ "$VERSION_FILE_TYPE" = "json" ]; then
         VERSION="v$(jq -r ".$VERSION_JSON_KEY" "$VERSION_FILE")"
       else

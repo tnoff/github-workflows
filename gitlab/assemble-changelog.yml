@@ -1,0 +1,133 @@
+# Reusable GitLab CI template that assembles accumulated changelog *fragments*
+# (written by /gitlab/bump-version.yml with BUMP_CHANGELOG=true) into a
+# Keep-a-Changelog CHANGELOG_FILE section for the current VERSION, deletes the
+# fragments, and pushes the result back to the default branch.
+#
+# Why fragments: prepending to a shared CHANGELOG.md on every MR conflicts when
+# multiple MRs land in one run. Instead each MR drops changelog.d/<slug>.md
+# (disjoint files, never conflict); this job folds them together once, at
+# release time, when there is only ever a single default-branch pipeline in
+# flight (so the push-back is not subject to the same concurrency).
+#
+# Idempotent: if CHANGELOG_DIR has no fragments, the job exits cleanly without
+# committing. Because the assembling commit is a fresh push to the default
+# branch, it triggers a follow-up pipeline whose CHANGELOG_DIR is now empty.
+#
+# INTEGRATION (decided — option (a); see the docs
+# "renovate-version-changelog-conflicts" project): tag/release must observe the
+# *assembled* CHANGELOG, not the pre-fold tree. In the same pipeline, later jobs
+# still see the old checkout, so tag/release run on the FOLLOW-UP pipeline once
+# fragments are drained. Wire this by setting GATE_ON_FRAGMENTS=true on the .tag
+# job (see /gitlab/tag.yml): while fragments are pending it defers with
+# TAG_CREATED=false (and .release skips in turn); the fold push below then fires
+# a follow-up pipeline where CHANGELOG_DIR is empty and tag/release proceed
+# against the assembled tree.
+#
+# REQUIRES GITLAB_PUSH_TOKEN (a PAT/deploy token with write_repository), NOT the
+# default CI_JOB_TOKEN. GitLab's infinite-loop guard suppresses pipelines for
+# CI_JOB_TOKEN pushes, so under CI_JOB_TOKEN the fold push would NOT trigger the
+# follow-up pipeline — tag/release would never fire and no release is cut. Set
+# GITLAB_PUSH_TOKEN on every repo that enables this flow.
+#
+# Do NOT wire tag/release to run unconditionally alongside this job (i.e. without
+# GATE_ON_FRAGMENTS) or they will tag/release the pre-fold commit.
+#
+# Usage in consumer repo's .gitlab-ci.yml:
+#
+#   include:
+#     - project: 'org/ci-workflows'
+#       ref: main
+#       file: '/gitlab/assemble-changelog.yml'
+#
+#   assemble-changelog:
+#     extends: .assemble-changelog
+#     stage: .pre
+#     rules:
+#       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+#
+# Optional variables:
+#   VERSION_FILE       Path to the version file (default: VERSION)
+#   VERSION_FILE_TYPE  'plain' or 'json' (default: plain)
+#   VERSION_JSON_KEY   Key holding the version when VERSION_FILE_TYPE=json (default: version)
+#   CHANGELOG_DIR      Directory of fragments (default: changelog.d)
+#   CHANGELOG_FILE     Assembled changelog (default: CHANGELOG.md)
+#   GITLAB_PUSH_TOKEN  PAT/deploy token with write_repository; falls back to CI_JOB_TOKEN.
+
+.assemble-changelog:
+  # Pre-baked ci-alpine-utils image (git + jq + bash); see CI_ALPINE_UTILS_IMAGE
+  # group var. before_script install is a no-op fallback on the pre-baked image.
+  image: $CI_ALPINE_UTILS_IMAGE
+  variables:
+    GIT_DEPTH: 0
+    VERSION_FILE: "VERSION"
+    VERSION_FILE_TYPE: "plain"
+    VERSION_JSON_KEY: "version"
+    CHANGELOG_DIR: "changelog.d"
+    CHANGELOG_FILE: "CHANGELOG.md"
+  before_script:
+    - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
+  script:
+    - |
+      set -e
+
+      # Nothing to do if there are no fragments — keeps the follow-up pipeline
+      # (triggered by our own push) from looping.
+      if ! ls "$CHANGELOG_DIR"/*.md >/dev/null 2>&1; then
+        echo "No changelog fragments in $CHANGELOG_DIR — nothing to assemble."
+        exit 0
+      fi
+
+      if [ "$VERSION_FILE_TYPE" = "json" ]; then
+        VERSION=$(jq -r ".$VERSION_JSON_KEY" "$VERSION_FILE" | tr -d '[:space:]')
+      else
+        VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+      fi
+      DATE=$(date -u +%Y-%m-%d)
+
+      # Build the new section: one bullet per non-empty fragment line.
+      SECTION=$(mktemp)
+      {
+        printf '## [%s] - %s\n\n### Changed\n\n' "$VERSION" "$DATE"
+        for f in "$CHANGELOG_DIR"/*.md; do
+          while IFS= read -r line; do
+            [ -n "$line" ] && printf -- '- %s\n' "$line"
+          done < "$f"
+        done
+        printf '\n'
+      } > "$SECTION"
+
+      # Prepend the section above the first existing "## [" heading; otherwise
+      # start (or seed) the changelog.
+      TMP=$(mktemp)
+      if [ -f "$CHANGELOG_FILE" ] && grep -q '^## \[' "$CHANGELOG_FILE"; then
+        awk -v sect="$SECTION" '
+          !done && /^## \[/ { while ((getline l < sect) > 0) print l; done=1 }
+          { print }
+        ' "$CHANGELOG_FILE" > "$TMP"
+      elif [ -f "$CHANGELOG_FILE" ]; then
+        cat "$CHANGELOG_FILE" "$SECTION" > "$TMP"
+      else
+        printf '# Changelog\n\n' > "$TMP"
+        cat "$SECTION" >> "$TMP"
+      fi
+      mv "$TMP" "$CHANGELOG_FILE"
+
+      git rm -q "$CHANGELOG_DIR"/*.md
+
+      echo "Assembled changelog section for $VERSION:"
+      echo "----"
+      cat "$SECTION"
+      echo "----"
+
+      git config user.email "ci@gitlab"
+      git config user.name "GitLab CI"
+      if [ -n "$GITLAB_PUSH_TOKEN" ]; then
+        git remote set-url origin "https://oauth2:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      else
+        echo "warning: GITLAB_PUSH_TOKEN not set — pushing with CI_JOB_TOKEN," >&2
+        echo "  which does not trigger a follow-up pipeline." >&2
+        git remote set-url origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      fi
+      git add "$CHANGELOG_FILE"
+      git commit -m "docs: assemble changelog for $VERSION"
+      git push origin "HEAD:${CI_DEFAULT_BRANCH}"

@@ -46,14 +46,17 @@
 #   VERSION_FILE_TYPE   'plain' or 'json' (default: plain)
 #   VERSION_JSON_KEY    Key holding the version when VERSION_FILE_TYPE=json (default: version)
 #   COMPARE_BRANCH      Branch to compare against (default: $CI_DEFAULT_BRANCH, falls back to "main")
-#   BUMP_CHANGELOG      Set to "true" to also prepend a new section to CHANGELOG_FILE for
-#                       the new version. Entry text is parsed from the MR title when it
-#                       matches renovate's "<type>(deps): update dependency <name> to
-#                       <version>" pattern; otherwise the MR title is used verbatim.
-#                       Idempotent — skipped when a section for the new version already
-#                       exists. (default: unset)
-#   CHANGELOG_FILE      Path to the changelog (default: CHANGELOG.md). Only used when
-#                       BUMP_CHANGELOG=true.
+#   BUMP_CHANGELOG      Set to "true" to also write a changelog *fragment* for this
+#                       change under CHANGELOG_DIR (conflict-free — each MR drops a
+#                       uniquely-named file rather than editing the shared changelog).
+#                       Entry text is parsed from the MR title when it matches
+#                       renovate's "<type>(deps): update dependency <name> to <version>"
+#                       pattern; otherwise the MR title is used verbatim. Fragments are
+#                       folded into CHANGELOG_FILE at release time by
+#                       /gitlab/assemble-changelog.yml. (default: unset)
+#   CHANGELOG_DIR       Directory holding unassembled changelog fragments
+#                       (default: changelog.d). Only used when BUMP_CHANGELOG=true.
+#   CHANGELOG_FILE      Path to the assembled changelog (default: CHANGELOG.md).
 
 .bump-version:
   # Run in GitLab's built-in `.pre` stage so the bump happens before any
@@ -75,6 +78,7 @@
     COMPARE_BRANCH: ""
     BUMP_CHANGELOG: ""
     CHANGELOG_FILE: "CHANGELOG.md"
+    CHANGELOG_DIR: "changelog.d"
   before_script:
     - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
   script:
@@ -136,50 +140,29 @@
         echo "$NEW_VERSION" > "${VERSION_FILE}"
       fi
 
+      # Changelog fragments (conflict-free): instead of prepending to the shared
+      # CHANGELOG_FILE — which collides when two MRs land in one run — each MR
+      # drops a uniquely-named fragment under CHANGELOG_DIR. Fragments are folded
+      # into CHANGELOG_FILE at release time by /gitlab/assemble-changelog.yml.
       CHANGELOG_UPDATED=false
       if [ "$BUMP_CHANGELOG" = "true" ]; then
-        if [ ! -f "$CHANGELOG_FILE" ]; then
-          echo "BUMP_CHANGELOG=true but $CHANGELOG_FILE not found — skipping changelog update." >&2
-        elif grep -q "^## \[$NEW_VERSION\]" "$CHANGELOG_FILE"; then
-          echo "CHANGELOG already has section for $NEW_VERSION — skipping"
-        else
-          DATE=$(date -u +%Y-%m-%d)
-          TITLE="${CI_MERGE_REQUEST_TITLE:-}"
-          # Parse renovate-style "<type>(deps): update dependency <name> to <version>"
-          # into a cleaner "Bumped <name> to <version>"; otherwise use the title verbatim.
-          ENTRY=$(printf '%s' "$TITLE" | sed -nE \
-            's/^(fix|chore|feat)\(deps\): update dependency (.+) to (v?[^[:space:]]+)$/Bumped \2 to \3/p')
-          if [ -z "$ENTRY" ]; then
-            ENTRY="${TITLE:-Patch bump to $NEW_VERSION}"
-          fi
-
-          TMP=$(mktemp)
-          awk -v ver="$NEW_VERSION" -v date="$DATE" -v entry="$ENTRY" '
-            !inserted && /^## \[/ {
-              print "## [" ver "] - " date
-              print ""
-              print "### Changed"
-              print ""
-              print "- " entry
-              print ""
-              inserted=1
-            }
-            { print }
-            END {
-              if (!inserted) {
-                print ""
-                print "## [" ver "] - " date
-                print ""
-                print "### Changed"
-                print ""
-                print "- " entry
-              }
-            }
-          ' "$CHANGELOG_FILE" > "$TMP"
-          mv "$TMP" "$CHANGELOG_FILE"
-          CHANGELOG_UPDATED=true
-          echo "CHANGELOG updated with: - $ENTRY"
+        mkdir -p "$CHANGELOG_DIR"
+        TITLE="${CI_MERGE_REQUEST_TITLE:-}"
+        # Parse renovate-style "<type>(deps): update dependency <name> to <version>"
+        # into a cleaner "Bumped <name> to <version>"; otherwise use the title verbatim.
+        ENTRY=$(printf '%s' "$TITLE" | sed -nE \
+          's/^(fix|chore|feat)\(deps\): update dependency (.+) to (v?[^[:space:]]+)$/Bumped \2 to \3/p')
+        if [ -z "$ENTRY" ]; then
+          ENTRY="${TITLE:-Patch bump to $NEW_VERSION}"
         fi
+        # Fragment name derives from the source branch: stable across rebases
+        # (the same MR overwrites its own fragment) and disjoint between MRs
+        # (no two MRs touch the same file → no merge conflict).
+        SLUG=$(printf '%s' "${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME:-}" | tr '/ ' '--' | tr -cd '[:alnum:]-' | cut -c1-60)
+        FRAGMENT="$CHANGELOG_DIR/${SLUG:-mr-${CI_MERGE_REQUEST_IID:-0}}.md"
+        printf '%s\n' "$ENTRY" > "$FRAGMENT"
+        CHANGELOG_UPDATED=true
+        echo "Wrote changelog fragment $FRAGMENT: $ENTRY"
       fi
 
       git config user.email "ci@gitlab"
@@ -194,7 +177,7 @@
       fi
       git add "${VERSION_FILE}"
       if [ "$CHANGELOG_UPDATED" = "true" ]; then
-        git add "${CHANGELOG_FILE}"
+        git add "${CHANGELOG_DIR}"
       fi
       # The X-Auto-Bump trailer marks this as our own commit so a later run can
       # peel + recompute it (see the recompute-on-rebase block above).
