@@ -2,7 +2,13 @@
 #
 # Compares the version on the current branch against the default branch.
 # If they match (no bump yet), increments the patch version, commits, and pushes
-# back to the source branch. Exits cleanly if already bumped, preventing loops.
+# back to the source branch. Exits cleanly if a *human* already bumped, preventing loops.
+#
+# Recompute-on-rebase: the bump commit is tagged with an "X-Auto-Bump: version"
+# trailer. On re-run (e.g. after the base branch moved), the job peels its own
+# prior bump commit and recomputes the version against the current base, then
+# pushes with --force-with-lease. This keeps the version correct across rebases
+# instead of stacking a stale bump that would conflict on merge.
 #
 # Supports plain-text version files (one line, e.g. "1.2.3") and JSON files
 # (e.g. package.json with a "version" key). For JSON the file is rewritten with
@@ -74,8 +80,10 @@
   script:
     - |
       BRANCH="${COMPARE_BRANCH:-${CI_DEFAULT_BRANCH:-main}}"
-      git fetch origin "${BRANCH}"
+      SRC="$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+      git fetch origin "${BRANCH}" "${SRC}"
 
+      # Read the version on the base branch and on this branch's current tip.
       if [ "$VERSION_FILE_TYPE" = "json" ]; then
         BASE_VERSION=$(git show "origin/${BRANCH}:${VERSION_FILE}" | jq -r ".$VERSION_JSON_KEY" | tr -d '[:space:]')
         CURRENT_VERSION=$(jq -r ".$VERSION_JSON_KEY" "${VERSION_FILE}" | tr -d '[:space:]')
@@ -84,15 +92,41 @@
         CURRENT_VERSION=$(cat "${VERSION_FILE}" | tr -d '[:space:]')
       fi
 
-      if [ "$BASE_VERSION" != "$CURRENT_VERSION" ]; then
-        echo "Version already bumped ($BASE_VERSION -> $CURRENT_VERSION), skipping"
+      # The version we want this branch to carry: base patch + 1.
+      MAJOR=$(echo "$BASE_VERSION" | cut -d. -f1)
+      MINOR=$(echo "$BASE_VERSION" | cut -d. -f2)
+      PATCH=$(echo "$BASE_VERSION" | cut -d. -f3)
+      NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))"
+
+      # Is this branch's tip our own auto-bump commit (carries our trailer)?
+      OURS=false
+      if git log -1 --format='%B' | grep -qi '^X-Auto-Bump: version[[:space:]]*$'; then
+        OURS=true
+      fi
+
+      # Steady state: the branch already carries the desired version — nothing to
+      # do. This is also what breaks the push -> pipeline -> push loop: our own
+      # bump commit re-triggers this job, which then sees CURRENT == NEW and exits.
+      if [ "$CURRENT_VERSION" = "$NEW_VERSION" ]; then
+        echo "Branch already at $NEW_VERSION (base $BASE_VERSION) — nothing to do."
         exit 0
       fi
 
-      MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
-      MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
-      PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-      NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))"
+      # A human bumped the version themselves (differs from base, not our commit):
+      # respect it and leave the branch untouched.
+      if [ "$CURRENT_VERSION" != "$BASE_VERSION" ] && [ "$OURS" != "true" ]; then
+        echo "Manual bump ($BASE_VERSION -> $CURRENT_VERSION) — leaving as-is."
+        exit 0
+      fi
+
+      # Recompute-on-rebase: if the tip is our own (now stale) bump — e.g. the
+      # base moved after MR-A merged — peel it off so we re-derive the version
+      # against the current base instead of stacking a stale bump that would
+      # conflict on the next rebase/merge.
+      if [ "$OURS" = "true" ]; then
+        echo "Peeling prior auto-bump commit; recomputing against origin/${BRANCH}"
+        git reset --hard HEAD~1
+      fi
 
       if [ "$VERSION_FILE_TYPE" = "json" ]; then
         TMP=$(mktemp)
@@ -162,5 +196,9 @@
       if [ "$CHANGELOG_UPDATED" = "true" ]; then
         git add "${CHANGELOG_FILE}"
       fi
-      git commit -m "chore: bump patch version to $NEW_VERSION"
-      git push origin "HEAD:$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME"
+      # The X-Auto-Bump trailer marks this as our own commit so a later run can
+      # peel + recompute it (see the recompute-on-rebase block above).
+      git commit -m "chore: bump patch version to $NEW_VERSION" -m "X-Auto-Bump: version"
+      # force-with-lease: replace a peeled stale bump safely, while refusing to
+      # clobber the branch if something else (e.g. a Renovate rebase) pushed first.
+      git push --force-with-lease origin "HEAD:${SRC}"
