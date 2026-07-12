@@ -64,11 +64,41 @@
     VERSION_JSON_KEY: "version"
     CHANGELOG_DIR: "changelog.d"
     CHANGELOG_FILE: "CHANGELOG.md"
+    # Advisory Discord failure notification target. Defaults to the group/project
+    # DISCORD_BUILD_FAILURE_WEBHOOK (the .discord-notify failure jobs use it too);
+    # unset -> no notification. The notification never fails the job.
+    DISCORD_FAILURE_WEBHOOK: "$DISCORD_BUILD_FAILURE_WEBHOOK"
   before_script:
     - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
+    - command -v curl >/dev/null 2>&1 || apk add --no-cache curl
   script:
     - |
       set -e
+
+      # Advisory Discord notification if assemble/push fails (e.g. the fold push
+      # is rejected by branch protection). Non-breaking: guarded on the webhook
+      # var, swallows curl errors. The no-fragments path exits 0, so a clean
+      # no-op run never notifies — only a genuine non-zero exit does.
+      _notify_failure() {
+        rc=$?
+        [ "$rc" -eq 0 ] && return 0
+        [ -n "$DISCORD_FAILURE_WEBHOOK" ] || return 0
+        payload=$(jq -n \
+          --arg p "$CI_PROJECT_NAME" \
+          --arg u "$CI_PROJECT_URL" \
+          --arg pipe "$CI_PIPELINE_URL" \
+          '{embeds: [{
+             title: "Changelog Assembly Failed",
+             color: 15158332,
+             fields: [
+               {name: "Project", value: ("[" + $p + "](" + $u + ")"), inline: true},
+               {name: "Pipeline", value: $pipe, inline: false}
+             ]
+           }]}')
+        curl -sf -m 10 -X POST -H 'Content-Type: application/json' \
+          -d "$payload" "$DISCORD_FAILURE_WEBHOOK" >/dev/null 2>&1 || true
+      }
+      trap _notify_failure EXIT
 
       # Nothing to do if there are no fragments — keeps the follow-up pipeline
       # (triggered by our own push) from looping.
