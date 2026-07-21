@@ -3,9 +3,11 @@
 # tarball that downstream MR jobs (e.g. .trufflehog-image from 0.0.36) can
 # scan without rebuilding.
 #
-# No push. No registry credentials. Same buildkit-via-cluster-service
-# transport as .buildkit-docker-push — runs on a long-lived buildkitd
-# Deployment, no dind.
+# No push. No registry credentials. Starts an EPHEMERAL in-job buildkitd
+# (the cluster-side buildkitd Deployment was retired so the ci pool can scale
+# to zero — see the docs project ci-scale-to-zero). Same buildctl transport as
+# .buildkit-docker-push. No dind, but it DOES need a privileged runner — the
+# OKE default runner runs job pods privileged.
 #
 # Usage in consumer repo's .gitlab-ci.yml:
 #
@@ -36,7 +38,8 @@
 #
 # Optional variables (defaults shown):
 #   BUILDKIT_IMAGE      docker.io/moby/buildkit:v0.30.0
-#   BUILDKIT_ADDR       tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+#   BUILDKIT_ADDR       unix:///run/buildkit/buildkitd.sock  (in-job daemon;
+#                                       override only to target an external one)
 #   CONTEXT_DIR         .              buildctl --local context=
 #   DOCKERFILE_DIR      .              buildctl --local dockerfile=
 #   DOCKERFILE_NAME     Dockerfile     buildctl --opt filename=
@@ -66,7 +69,7 @@
   image: $BUILDKIT_IMAGE
   variables:
     BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.30.0
-    BUILDKIT_ADDR: tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+    BUILDKIT_ADDR: unix:///run/buildkit/buildkitd.sock
     CONTEXT_DIR: .
     DOCKERFILE_DIR: .
     DOCKERFILE_NAME: Dockerfile
@@ -74,6 +77,24 @@
     OUTPUT_NAME: $CI_PROJECT_NAME:ci
     OUTPUT_TARBALL: image.tar
     CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
+  before_script:
+    - |
+      # Ephemeral in-job buildkitd — the cluster buildkitd Deployment was
+      # retired so the ci pool can scale to zero (docs: ci-scale-to-zero).
+      # The moby/buildkit image ships buildkitd + buildctl; the OKE default
+      # runner runs job pods privileged, so a rootful buildkitd on a local
+      # unix socket works without dind. S3 layer cache is unaffected: the
+      # AWS_* / BUILDKIT_CACHE_BUCKET vars (buildkit-s3-creds) are in this
+      # container's env, so the in-job daemon imports/exports the same OCI
+      # Object Storage cache the cluster daemon used to.
+      buildkitd >/tmp/buildkitd.log 2>&1 &
+      for i in $(seq 1 30); do
+        buildctl --addr "$BUILDKIT_ADDR" debug workers >/dev/null 2>&1 && break
+        if [ "$i" = 30 ]; then
+          echo "buildkitd did not become ready:" >&2; cat /tmp/buildkitd.log >&2; exit 1
+        fi
+        sleep 1
+      done
   script:
     - |
       CACHE_ARGS=""

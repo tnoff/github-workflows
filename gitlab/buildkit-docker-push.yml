@@ -14,9 +14,11 @@
 # own inline buildkit-via-cluster-service jobs that this template
 # consolidates.
 #
-# Buildkit runs out-of-cluster against a long-running buildkitd Deployment
-# (avoiding dind), so the consumer's runner does not need privileged mode.
-# Override BUILDKIT_ADDR for non-default deployments.
+# Buildkit runs as an EPHEMERAL daemon started inside the job pod (the
+# cluster-side buildkitd Deployment was retired so the ci pool can scale to
+# zero — see the docs project ci-scale-to-zero). This needs a PRIVILEGED
+# runner; the OKE default runner runs job pods privileged. No dind. Override
+# BUILDKIT_ADDR only to target an external daemon.
 #
 # Authentication uses base64-encoded CI variables (mirrors the convention
 # introduced for the old .docker-push in 0.0.37). Required CI variables on
@@ -47,7 +49,8 @@
 #
 # Optional variables (defaults shown):
 #   BUILDKIT_IMAGE      docker.io/moby/buildkit:v0.30.0
-#   BUILDKIT_ADDR       tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+#   BUILDKIT_ADDR       unix:///run/buildkit/buildkitd.sock  (in-job daemon;
+#                                     override only to target an external one)
 #   CONTEXT_DIR         .            buildctl --local context=
 #   DOCKERFILE_DIR      .            buildctl --local dockerfile=
 #   DOCKERFILE_NAME     Dockerfile   buildctl --opt filename=
@@ -92,7 +95,7 @@
   needs: []
   variables:
     BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.30.0
-    BUILDKIT_ADDR: tcp://buildkitd.gitlab-runner.svc.cluster.local:1234
+    BUILDKIT_ADDR: unix:///run/buildkit/buildkitd.sock
     CONTEXT_DIR: .
     DOCKERFILE_DIR: .
     DOCKERFILE_NAME: Dockerfile
@@ -103,6 +106,23 @@
     CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
     PUSH_EXPORT_CACHE: 'false'
   before_script:
+    - |
+      # Ephemeral in-job buildkitd — the cluster buildkitd Deployment was
+      # retired so the ci pool can scale to zero (docs: ci-scale-to-zero).
+      # The moby/buildkit image ships buildkitd + buildctl; the OKE default
+      # runner runs job pods privileged, so a rootful buildkitd on a local
+      # unix socket works without dind. S3 layer cache is unaffected: the
+      # AWS_* / BUILDKIT_CACHE_BUCKET vars (buildkit-s3-creds) are in this
+      # container's env, so the in-job daemon imports the same OCI Object
+      # Storage cache the cluster daemon used to.
+      buildkitd >/tmp/buildkitd.log 2>&1 &
+      for i in $(seq 1 30); do
+        buildctl --addr "$BUILDKIT_ADDR" debug workers >/dev/null 2>&1 && break
+        if [ "$i" = 30 ]; then
+          echo "buildkitd did not become ready:" >&2; cat /tmp/buildkitd.log >&2; exit 1
+        fi
+        sleep 1
+      done
     - mkdir -p "$DOCKER_CONFIG"
     - |
       err() { echo "$1" >&2; exit 1; }
