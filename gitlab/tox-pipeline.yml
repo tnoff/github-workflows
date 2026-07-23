@@ -274,7 +274,18 @@
           '  - test',
           '  - coverage',
           '',
+          # Child pipelines do NOT inherit the parent's `default:`, so the
+          # parent repo's retry config never reaches these matrix jobs. Emit
+          # it here so an infra-side pod-start failure (runner_system_failure /
+          # timeout) auto-retries instead of needing a manual restart. Only
+          # infra classes -> a failing test (script_failure) is never retried.
           'default:',
+          '  retry:',
+          '    max: 2',
+          '    when:',
+          '      - runner_system_failure',
+          '      - stuck_or_timeout_failure',
+          '      - scheduler_failure',
           '  tags:',
           '    - self-hosted',
           '',
