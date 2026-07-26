@@ -34,5 +34,10 @@
     RENOVATE_TOKEN: $RENOVATE_TOKEN
     GITHUB_COM_TOKEN: $GITHUB_COM_TOKEN
     LOG_LEVEL: info
+    # Allowlist for repo-level postUpgradeTasks commands. postUpgrade shell is
+    # refused unless allowlisted in the self-hosted (global) config — a repo's
+    # renovate.json cannot authorize its own commands. Scoped by regex to the
+    # terraform-docs regen helper; repos without that script simply never match.
+    RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS: '["^bash ci/renovate-terraform-docs\\.sh$"]'
   script:
     - renovate $CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME
