@@ -82,19 +82,6 @@ default:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: always
 
-"notify:tag-failure":
-  extends: .discord-notify
-  stage: notify
-  needs: ["push:tag"]
-  tags:
-    - self-hosted
-  variables:
-    NOTIFY_TYPE: failure
-    DISCORD_WEBHOOK_URL: $DISCORD_BUILD_FAILURE_WEBHOOK
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
-      when: on_failure
-
 "notify:merged":
   extends: .discord-notify
   stage: notify
