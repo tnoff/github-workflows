@@ -19,12 +19,24 @@
 #   RENOVATE_TOKEN      GitLab PAT with api scope — used to open/update MRs
 #
 # Optional CI variables:
-#   GITHUB_COM_TOKEN    GitHub PAT (no scopes needed beyond public read) — lets
-#                       Renovate fetch release notes from github.com when
-#                       updating dependencies whose source/changelog lives there.
-#                       Without it, MR bodies show "Release Notes retrieval for
-#                       this MR were skipped because no github.com credentials
-#                       were available."
+#   GITHUB_BOT_TOKEN    GitHub PAT (no scopes needed beyond public read) — lets
+#                       Renovate fetch release notes from github.com, and is
+#                       REQUIRED in practice for any repo using the terraform
+#                       manager (it resolves terraform core + every provider via
+#                       github-releases). Defined at tnoff-projects group scope,
+#                       so it is normally inherited with no per-repo setup.
+#                       Without a valid token, MR bodies show "Release Notes
+#                       retrieval for this MR were skipped because no github.com
+#                       credentials were available", and github.com 401s the
+#                       release lookups.
+#
+#                       This default was previously $GITHUB_COM_TOKEN, which is
+#                       defined at NO scope — GitLab expands an undefined
+#                       variable to an empty string, Renovate presents that empty
+#                       token, and github.com returns 401. That silently broke
+#                       every repo which did not override it (see terraform-admin!37
+#                       and docs MR !87). Repos that already set GITHUB_COM_TOKEN
+#                       in their own renovate: job still win over this default.
 #
 .renovate:
   image: docker.io/renovate/renovate:43
@@ -40,7 +52,7 @@
     RENOVATE_PLATFORM: gitlab
     RENOVATE_ENDPOINT: $CI_API_V4_URL
     RENOVATE_TOKEN: $RENOVATE_TOKEN
-    GITHUB_COM_TOKEN: $GITHUB_COM_TOKEN
+    GITHUB_COM_TOKEN: $GITHUB_BOT_TOKEN
     LOG_LEVEL: info
     # Allowlist for repo-level postUpgradeTasks commands. postUpgrade shell is
     # refused unless allowlisted in the self-hosted (global) config — a repo's

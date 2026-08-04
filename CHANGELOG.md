@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.51] - 2026-08-03
+
+### Fixed
+
+- `gitlab/renovate.yml`: default `GITHUB_COM_TOKEN` to `$GITHUB_BOT_TOKEN` instead of `$GITHUB_COM_TOKEN`. `GITHUB_COM_TOKEN` is defined at **no** scope — not group, not project — so GitLab expanded it to an empty string, Renovate presented that empty token to github.com, and github.com returned `401 unauthorized`. 18 of the 22 Renovate repos already override the default in their own `renovate:` job; the remaining stragglers silently ran with a broken github.com token. This is loudest on terraform repos, where the terraform manager resolves terraform core plus every provider via `github-releases`, and merely cosmetic elsewhere (missing release notes in MR bodies). `GITHUB_BOT_TOKEN` is defined at `tnoff-projects` group scope, so consumers inherit it with no per-repo setup. Repos that set `GITHUB_COM_TOKEN` in their own job are unaffected — a job-level variable still wins over the template default. Diagnosed in `terraform-admin!37`; see docs MR !87.
+
 ## [0.0.50] - 2026-08-03
 
 ### Fixed
