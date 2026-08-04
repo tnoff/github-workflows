@@ -7,6 +7,13 @@
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
   "gitIgnoredAuthors": ["ci@gitlab"],
+  "hostRules": [
+    {
+      "description": "Cap concurrent github.com requests to bound peak memory. The terraform manager fetches and unzips EVERY platform build of a provider to compute its h1: hash, at the default queue concurrency of 16. oracle/oci ships 13 platform zips (~65MiB each), so that fan-out OOMKills the runner's 1500Mi build container — and the Kubernetes executor's attach strategy never notices the death, so the job idles until the job timeout. Costs wall-clock only on lockfile branches.",
+      "matchHost": "github.com",
+      "concurrentRequestLimit": 2
+    }
+  ],
   "packageRules": [
     {
       "description": "Keep .gitlab-ci.yml include refs SHA-pinned to main via the custom regex manager; disable the built-in gitlabci-include manager so it never proposes tag bumps (e.g. v0.0.48) for security.",

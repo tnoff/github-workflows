@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.50] - 2026-08-03
+
+### Fixed
+
+- `renovate/default.json`: cap concurrent `github.com` requests at 2 via a `hostRules` entry. The terraform manager's lockfile `updateArtifacts` downloads and unzips **every** platform build of a provider to compute its `h1:` hash, and issues those fetches at the default queue concurrency of 16. For `oracle/oci` — 13 platform zips at ~65MiB each — that parallel fan-out drove the runner's `build` container past its 1500Mi memory limit and it was OOMKilled. The GitLab Kubernetes executor's **attach strategy does not detect a dead build container**, so the job emitted nothing further and burned the full 1h timeout instead of failing. Observed on `terraform-admin`, whose scheduled Renovate job timed out repeatedly: the container's working set was pinned at 1398-1472MiB against the 1500Mi cap and its cgroup metrics vanished ~6min in, while the `helper` container kept reporting for the remaining ~45min.
+- `gitlab/renovate.yml`: add `timeout: 30m` to `.renovate`. This is a backstop for the attach-strategy hang above, not a budget — Renovate itself completes in 1.5-12min on these repos. It is deliberately **not** tighter: the pod can sit `Pending` for 8-20min waiting on an A1 ci node to cold-start from zero, and that wait counts against the job timeout, so a 15m cap would false-fire on scale-from-zero. Note `job_execution_timeout` is not in the `stuck_or_timeout_failure` retry class, so a wedged job is capped at one 30m burn rather than retried.
+
 ## [0.0.49] - 2026-06-25
 
 ### Added

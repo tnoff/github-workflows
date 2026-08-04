@@ -28,6 +28,14 @@
 #
 .renovate:
   image: docker.io/renovate/renovate:43
+  # Backstop, not a budget. If the build container dies mid-run (e.g. OOMKilled),
+  # the Kubernetes executor's attach strategy does not detect it — the job emits
+  # nothing further and burns the full timeout before failing. Renovate itself
+  # finishes in 1.5-12min across these repos, but the pod can sit Pending for
+  # 8-20min waiting on an A1 ci node to cold-start from zero, and that wait counts
+  # against this timeout. 30m clears the worst observed cold start with headroom
+  # while capping a wedged job at half an hour instead of a full hour.
+  timeout: 30m
   variables:
     RENOVATE_PLATFORM: gitlab
     RENOVATE_ENDPOINT: $CI_API_V4_URL
