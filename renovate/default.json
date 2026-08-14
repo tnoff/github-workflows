@@ -19,6 +19,30 @@
       "description": "Keep .gitlab-ci.yml include refs SHA-pinned to main via the custom regex manager; disable the built-in gitlabci-include manager so it never proposes tag bumps (e.g. v0.0.48) for security.",
       "matchManagers": ["gitlabci-include"],
       "enabled": false
+    },
+    {
+      "description": "Automerge the shared CI include pin. Every consumer repo SHA-pins /gitlab/*.yml to github-workflows main, so one commit here fans out into one MR per repo — 123 of the 400 dependency MRs merged fleet-wide in the 8 weeks to 2026-08-14 (19 repos), every one of them hand-merged. The change was already reviewed once when it landed on main here; re-approving the same SHA 19 more times is duplicate review. The consumer's own pipeline still has to go green before this merges, which is the same gate that already automerges the test-dependencies group. Deliberately scoped to github-workflows by exact name: terraform-modules resolves through the same git-refs datasource but a bump there changes real infrastructure on apply, so it stays manual.",
+      "matchDatasources": ["git-refs"],
+      "matchPackageNames": ["https://gitlab.com/tnoff-projects/github-workflows"],
+      "automerge": true
+    },
+    {
+      "description": "Batch the cloud SDKs. oci, boto3, awscli and friends cut releases most weekdays, so each one arrives as its own MR on every Renovate run — oci alone was 22 MRs across 4 repos in the 8 weeks to 2026-08-14. One grouped MR plus a 7-day floor collapses the intermediate point releases into a single bump. No additionalBranchPrefix on purpose: each repo's own config already decides whether these land under dev- (and therefore whether they cut a version bump), and overriding that here would silently start or stop releases per repo.",
+      "matchPackageNames": [
+        "oci",
+        "oci-cli",
+        "awscli",
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "google-api-python-client",
+        "google-auth",
+        "google-auth-*",
+        "kubernetes",
+        "python-gitlab"
+      ],
+      "groupName": "cloud sdks",
+      "minimumReleaseAge": "7 days"
     }
   ],
   "customManagers": [
