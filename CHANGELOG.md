@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.52] - 2026-08-15
+
+### Removed
+
+- `gitlab/assemble-changelog.yml`: drop the advisory Discord failure notification (the `_notify_failure` EXIT trap, the `DISCORD_FAILURE_WEBHOOK` variable, and the now-unused `curl` install in `before_script`). Added in `b0c827a` (!68, 2026-07-12) to cover a gap — `assemble-changelog` runs in `.pre`, so when it failed the push-stage `notify:*-failure` jobs were skipped on unmet `needs` and nobody was told. That gap closed when the `gitlab-ci-metrics` Phase 2 alert (`GitLab CI job failed after final retry`) broadened to `type!="check"`: GCPE labels this job `type=maintenance`, so the alert already covers it and routes to the same `#ci-alerts` channel via the `DiscordCI` contact point. The trap was therefore posting a **duplicate** — once immediately, once from Grafana ~5m later — for every failure. It also posted silently (`curl -sf … >/dev/null 2>&1 || true`), which is why it outlived the fleet-wide `notify:*-failure` retirement that removed every other direct CI→Discord sender. Confirmed still firing on `discord-bot` 2026-08-15 (fold push rejected by the pre-receive hook). No consumer action needed beyond advancing the include pin; repos that set `DISCORD_FAILURE_WEBHOOK` explicitly will find it inert. Once all 13 consumers are past this ref, the `DISCORD_BUILD_FAILURE_WEBHOOK` group variable (`terraform` `infra/gitlab.tf`) has no remaining reader and can be retired.
+
 ## [0.0.51] - 2026-08-03
 
 ### Fixed
