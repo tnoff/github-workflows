@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.53] - 2026-08-15
+
+### Removed
+
+- `gitlab/discord-notify.yml`: deleted. The template has no consumers left. Its `failure` type went away fleet-wide when the `notify:*-failure` jobs retired into the Grafana `gitlab-ci-job-failure` alert, and `0.0.52` removed the last straggler (the `assemble-changelog` EXIT trap). Its remaining two types, `mr_opened` and `mr_merged`, are retired here: the `#mr-opened` / `#mr-merged` Discord channels, their webhooks, and the `DISCORD_MR_OPENED_WEBHOOK` / `DISCORD_MR_MERGED_WEBHOOK` group variables are being torn down in `terraform`, and all 20 consumer repos have dropped their `notify:mr-*` jobs and the include. GitLab's own MR list, todos, and email notifications cover what these pings answered. The GitHub-side `.github/workflows/discord-notify.yml` is **unaffected** — it is failure-only and still consumed by GitHub-mirror CI. Consumers pinned to an older `ref:` keep resolving the file at that ref; nothing breaks until they advance the pin, by which point the include is already gone from their config.
+
 ## [0.0.52] - 2026-08-15
 
 ### Removed

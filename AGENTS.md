@@ -39,7 +39,7 @@ changes can ride the existing tag.
 ### Two parallel template surfaces — keep them in sync where they overlap
 
 `gitlab/tag.yml` and `.github/workflows/tag.yml` (and similarly for
-`bump-version`, `discord-notify`, etc.) share semantics. When you change
+`bump-version`, etc.) share semantics. When you change
 the behaviour of one, audit the other for the same change — drifting
 the GitHub and GitLab versions of "what should be the same template"
 creates the same class of bug across every consumer.
