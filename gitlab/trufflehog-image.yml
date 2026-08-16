@@ -85,6 +85,30 @@
         echo "Provide it via an upstream build job's artifacts and link with 'needs:'." >&2
         exit 1
       fi
+      # Fetch the tarball from OCI Object Storage when the producer put it
+      # there. NOTE the deliberate absence of `2>/dev/null` and `|| true`: this
+      # is a secret-scanning gate, so a failed fetch must fail the job. A silent
+      # skip would leave the pipeline green with nothing scanned, which is the
+      # one outcome worse than the artifact-based status quo. Contrast the .tox
+      # cache in tox-pipeline.yml, which fails soft on purpose because a miss
+      # only costs a rebuild.
+      #
+      # When IMAGE_HANDOFF_BUCKET is unset the tarball arrived as a job artifact
+      # via needs:, and this is a no-op — that is what lets Renovate roll the
+      # include pin through consumer repos in any order.
+      if [ -n "${IMAGE_HANDOFF_BUCKET:-}" ]; then
+        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required
+        export AWS_S3_ADDRESSING_STYLE=path
+        export AWS_DEFAULT_REGION="$AWS_REGION"
+        obj="s3://${IMAGE_HANDOFF_BUCKET}/${CI_PIPELINE_ID}/${TRUFFLEHOG_IMAGE_TARBALL}"
+        echo "image handoff: fetching $obj"
+        aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp "$obj" "$TRUFFLEHOG_IMAGE_TARBALL"
+      fi
+      if [ ! -s "$TRUFFLEHOG_IMAGE_TARBALL" ]; then
+        echo "ERROR: $TRUFFLEHOG_IMAGE_TARBALL is missing or empty — refusing to report a clean scan." >&2
+        exit 1
+      fi
       echo "Scanning $TRUFFLEHOG_IMAGE_TARBALL"
       # --exclude-paths must be quoted: the glob contains `*`, which the shell
       # would otherwise pathname-expand against the job's working directory.

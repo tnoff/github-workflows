@@ -37,7 +37,7 @@
 #       OUTPUT_TARBALL: image-dispatcher.tar
 #
 # Optional variables (defaults shown):
-#   BUILDKIT_IMAGE      docker.io/moby/buildkit:v0.30.0
+#   BUILDKIT_IMAGE      $CI_BUILDKIT_IMAGE (moby/buildkit v0.30.0 + aws-cli)
 #   BUILDKIT_ADDR       unix:///run/buildkit/buildkitd.sock  (in-job daemon;
 #                                       override only to target an external one)
 #   CONTEXT_DIR         .              buildctl --local context=
@@ -68,7 +68,7 @@
   stage: validate
   image: $BUILDKIT_IMAGE
   variables:
-    BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.30.0
+    BUILDKIT_IMAGE: $CI_BUILDKIT_IMAGE
     BUILDKIT_ADDR: unix:///run/buildkit/buildkitd.sock
     CONTEXT_DIR: .
     DOCKERFILE_DIR: .
@@ -113,10 +113,44 @@
         $BUILD_ARGS \
         $CACHE_ARGS \
         --output type=docker,name="$OUTPUT_NAME",dest="$OUTPUT_TARBALL"
+    # Hand the tarball to the paired .trufflehog-image job through OCI Object
+    # Storage rather than a GitLab job artifact. These tarballs were the whole
+    # of the namespace artifact quota (13.9 GB of a 14.0 GB rollup, ~1.27 GB per
+    # discord-bot MR pipeline) and the scan job is their only consumer.
+    #
+    # The local file is removed on success so the artifacts: upload below finds
+    # nothing and stores a few bytes instead of hundreds of MB. When
+    # IMAGE_HANDOFF_BUCKET is unset the tarball stays put and the artifact path
+    # behaves exactly as before, which is what keeps this safe while Renovate
+    # rolls the include pin through consumer repos in arbitrary order.
+    #
+    # OCI S3-compat notes, same set tox-pipeline.yml carries for the .tox cache:
+    # the object is uploaded from a FILE (a streamed `aws s3 cp - s3://…` forces
+    # chunked payload signing, which OCI rejects with SignatureDoesNotMatch on
+    # CreateMultipartUpload); path addressing is required for the underscore
+    # bucket name; when_required drops awscli v2's default integrity checksums,
+    # which OCI also rejects. No compression — the layer blobs inside a
+    # docker-save tarball are already compressed.
+    - |
+      if [ -n "${IMAGE_HANDOFF_BUCKET:-}" ]; then
+        export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+        export AWS_RESPONSE_CHECKSUM_CALCULATION=when_required
+        export AWS_S3_ADDRESSING_STYLE=path
+        export AWS_DEFAULT_REGION="$AWS_REGION"
+        obj="s3://${IMAGE_HANDOFF_BUCKET}/${CI_PIPELINE_ID}/${OUTPUT_TARBALL}"
+        echo "image handoff: uploading $OUTPUT_TARBALL -> $obj"
+        aws --endpoint-url "$AWS_ENDPOINT_URL_S3" s3 cp "$OUTPUT_TARBALL" "$obj"
+        rm -f "$OUTPUT_TARBALL"
+      else
+        echo "IMAGE_HANDOFF_BUCKET not set — leaving $OUTPUT_TARBALL as a job artifact"
+      fi
   artifacts:
     paths:
       - $OUTPUT_TARBALL
-    expire_in: 1 day
+    # Only has to outlive the paired scan job in the same pipeline. Stays as a
+    # fallback for the IMAGE_HANDOFF_BUCKET-unset path; on the S3 path the file
+    # is already gone and this stores nothing.
+    expire_in: 2 hours
   rules:
     # Fork MRs require a project member to manually trigger jobs — prevents untrusted code from running CI automatically
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID

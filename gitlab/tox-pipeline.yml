@@ -95,6 +95,13 @@
 # requiring a maintainer to manually trigger. Override per consumer.
 
 .tox-generate:
+  # Runs `tox -l` against the repo and writes a child pipeline YAML; it wants
+  # nothing from upstream jobs. Without this, GitLab's default makes a job with
+  # no needs: in a later stage download artifacts from EVERY preceding stage —
+  # in discord-bot that meant pulling all five build-check image tarballs
+  # (~1.27 GB) to run a one-second command, 82s of a 145s job. Also affects
+  # enheduanna, hathor, public-transit and oke-security-scanner.
+  dependencies: []
   stage: validate
   image: $TOX_GENERATE_IMAGE
   variables:
