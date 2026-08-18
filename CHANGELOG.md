@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.55] - 2026-08-18
+
+### Removed
+
+- `gitlab/buildkit-build-check.yml`: the `artifacts:` block is gone. `0.0.54` kept it as a fallback so the include pin could roll through consumer repos in arbitrary order — with `IMAGE_HANDOFF_BUCKET` unset the tarball stayed on disk and uploaded as before. All ten consumers are now on `b6d70f45`, so the fallback has no users. Removing it also clears the `WARNING: <tarball>: no matching files` that the empty artifact upload printed in **every** build job log, which was cosmetic but permanent.
+
+### Changed
+
+- `gitlab/buildkit-build-check.yml`: an unset `IMAGE_HANDOFF_BUCKET` is now a hard error at the top of the upload step, rather than a silent fall-through to a local file. The variable reaches every job pod from the runner's `buildkit-s3-creds` Secret via `envFrom`, so an empty value means the job is not on the `self-hosted` runner or the Secret changed — both worth failing loudly for. Without the `artifacts:` fallback the alternative was a confusing 404 in the downstream scan job, one stage later and further from the cause. The elevated runner (`oke-elevated`) does **not** carry that Secret, but no build-check job targets it — they all run under the `self-hosted` tag.
+
 ## [0.0.54] - 2026-08-15
 
 ### Changed
