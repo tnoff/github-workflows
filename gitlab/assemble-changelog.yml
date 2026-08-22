@@ -13,6 +13,13 @@
 # committing. Because the assembling commit is a fresh push to the default
 # branch, it triggers a follow-up pipeline whose CHANGELOG_DIR is now empty.
 #
+# Guarded: the job FAILS if CHANGELOG_FILE already has a section for the current
+# VERSION while fragments are still pending. That means the change that added
+# them never bumped VERSION_FILE, and folding would file it under an already
+# released (and already tagged) version — which also makes the downstream tag
+# job skip, so the change would ship with no release at all. See the block
+# around VERSION_RE below.
+#
 # INTEGRATION (decided — option (a); see the docs
 # "renovate-version-changelog-conflicts" project): tag/release must observe the
 # *assembled* CHANGELOG, not the pre-fold tree. In the same pipeline, later jobs
@@ -91,14 +98,57 @@
       fi
       DATE=$(date -u +%Y-%m-%d)
 
-      # Build the new section: one bullet per non-empty fragment line.
+      # Refuse to fold into a version that has already been released.
+      #
+      # Without this, a fragment whose MR forgot to bump VERSION_FILE is folded
+      # into a section for a version that is already tagged. Two things then go
+      # wrong, both silently: this job appends a SECOND "## [$VERSION]" block, and
+      # the follow-up pipeline's tag job finds the tag already present, so it sets
+      # TAG_CREATED=false and skips — and .release skips with it. Both jobs go
+      # green, the change is documented under a release it is not part of, and it
+      # never gets a tag of its own. Every subsequent fold repeats it, because
+      # VERSION never moves.
+      #
+      # Fail loudly instead. Choosing the new version is the author's call, not
+      # something to guess here. A red job is already routed to #ci-alerts by the
+      # "GitLab CI job failed after final retry" rule (see the note above).
+      VERSION_RE=$(printf '%s' "$VERSION" | sed 's/[][\.*^$\/]/\\&/g')
+      if [ -f "$CHANGELOG_FILE" ] && grep -q "^## \[$VERSION_RE\]" "$CHANGELOG_FILE"; then
+        echo "error: $CHANGELOG_FILE already has a '## [$VERSION]' section, but"       >&2
+        echo "  $CHANGELOG_DIR still holds fragments:"                                 >&2
+        ls "$CHANGELOG_DIR"/*.md | sed 's/^/    /'                                     >&2
+        echo "  Whatever added them did not bump $VERSION_FILE, so folding now would"  >&2
+        echo "  file the change under an already-released version and it would never"  >&2
+        echo "  be tagged. Bump $VERSION_FILE and re-run."                             >&2
+        exit 1
+      fi
+
+      # Build the new section: one bullet per fragment paragraph.
       SECTION=$(mktemp)
       {
         printf '## [%s] - %s\n\n### Changed\n\n' "$VERSION" "$DATE"
         for f in "$CHANGELOG_DIR"/*.md; do
-          while IFS= read -r line; do
-            [ -n "$line" ] && printf -- '- %s\n' "$line"
-          done < "$f"
+          # A bullet is a PARAGRAPH, not a physical line. Printing '- ' in front
+          # of every non-empty line broke three ways: a hard-wrapped paragraph
+          # came out as one bullet per line, a fragment already written with its
+          # own '- ' came out as '- - ', and an intentional list could not be
+          # told apart from a wrapped sentence.
+          #
+          # A line opening with '-' or '*' starts a new bullet and its marker is
+          # consumed rather than doubled; any other non-blank line is a
+          # continuation joined onto the current bullet with a space; a blank
+          # line closes it. Single-quoted so the shell leaves awk's $0 alone.
+          #
+          # Known limitation: a fragment that writes its own '### Section'
+          # heading still lands as a bullet. This template owns the section
+          # structure and emits '### Changed' itself.
+          awk '
+            function flush() { if (buf != "") { print "- " buf; buf = "" } }
+            /^[[:space:]]*$/                { flush(); next }
+            /^[[:space:]]*[-*][[:space:]]+/ { flush(); sub(/^[[:space:]]*[-*][[:space:]]+/, ""); buf = $0; next }
+                                            { sub(/^[[:space:]]+/, ""); buf = (buf == "" ? $0 : buf " " $0) }
+            END                             { flush() }
+          ' "$f"
         done
         printf '\n'
       } > "$SECTION"
