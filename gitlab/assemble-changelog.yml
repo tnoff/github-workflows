@@ -1,3 +1,29 @@
+# This file carries BOTH halves of the changelog-fragment flow:
+#
+#   .assemble-changelog      hidden; the consumer instantiates it. Folds
+#                            fragments into CHANGELOG_FILE on the default
+#                            branch and pushes back.
+#   changelog-fragment-check CONCRETE; runs automatically in any repo that
+#                            includes this file, no instantiation needed.
+#                            Fails a merge request that adds a fragment
+#                            without bumping the version file.
+#
+# The check is deliberately a concrete job rather than a hidden template, which
+# is the one place this repo departs from its own convention. It is a guard, and
+# a guard every consumer has to remember to wire up is a guard that is missing
+# from whichever repo forgot. Including the file is the opt-in.
+#
+# To disable it in a consumer, redefine the job there:
+#
+#   changelog-fragment-check:
+#     rules:
+#       - when: never
+#
+# stage: .pre is deliberate too — it is a GitLab built-in that exists in every
+# pipeline, so the concrete job cannot break a consumer whose stage list happens
+# not to contain the stage this file picked. It also fails before any build job
+# spends time.
+#
 # Reusable GitLab CI template that assembles accumulated changelog *fragments*
 # (written by /gitlab/bump-version.yml with BUMP_CHANGELOG=true) into a
 # Keep-a-Changelog CHANGELOG_FILE section for the current VERSION, deletes the
@@ -188,3 +214,109 @@
       git add "$CHANGELOG_FILE"
       git commit -m "docs: assemble changelog for $VERSION"
       git push origin "HEAD:${CI_DEFAULT_BRANCH}"
+
+
+# Merge-request-side guard. The fold guard inside .assemble-changelog above
+# refuses to fold a fragment into a version that already has a section, but it
+# runs on the default branch, after the merge — by then the only signal is a red
+# pipeline on main and the change is already in. This asks the same question on
+# the merge request, where the author can still fix it.
+#
+# Both are wanted, and they catch different things. This job cannot see a race:
+# two merge requests open at once can each bump to the same new version, both
+# pass here, and the second to merge still folds into a version that now has a
+# section. The default-branch guard is what catches that.
+#
+# The failure mode this is really aimed at is not forgetfulness, it is a rebase.
+# A branch that correctly bumped 2.5.88 -> 2.5.89 and then rebased onto a main
+# that had already released 2.5.89 has its bump applied away with NO conflict:
+# the file already says what the commit wanted it to say. The merge request
+# silently loses a changed file and the diff view shows nothing unusual.
+# Observed on discord-bot!235 on 2026-08-20.
+changelog-fragment-check:
+  stage: .pre
+  # Pre-baked ci-alpine-utils image (git + jq + bash); see CI_ALPINE_UTILS_IMAGE
+  # group var. before_script install is a no-op fallback on the pre-baked image.
+  image: $CI_ALPINE_UTILS_IMAGE
+  variables:
+    # Needed for the diff against the target branch — a shallow clone may not
+    # contain the merge base.
+    GIT_DEPTH: 0
+    VERSION_FILE: "VERSION"
+    VERSION_FILE_TYPE: "plain"
+    VERSION_JSON_KEY: "version"
+    CHANGELOG_DIR: "changelog.d"
+    CHANGELOG_FILE: "CHANGELOG.md"
+  before_script:
+    - command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || apk add --no-cache git jq
+  script:
+    - |
+      set -e
+
+      read_version() {
+        if [ "$VERSION_FILE_TYPE" = "json" ]; then
+          jq -r ".$VERSION_JSON_KEY" | tr -d '[:space:]'
+        else
+          tr -d '[:space:]'
+        fi
+      }
+
+      # CI_MERGE_REQUEST_DIFF_BASE_SHA is the merge base GitLab computed for the
+      # MR. Fall back to computing it, so the job still works if a pipeline runs
+      # without it set.
+      BASE="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"
+      if [ -z "$BASE" ]; then
+        git fetch -q origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        BASE=$(git merge-base HEAD "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME")
+      fi
+      echo "Comparing against merge base $BASE"
+
+      # ACMR rather than just A: a fragment carried over and edited still needs a
+      # version to land under. Deletions are ignored — reverting a fragment is
+      # not a change that needs releasing.
+      FRAGMENTS=$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- "$CHANGELOG_DIR" | grep '\.md$' || true)
+      if [ -z "$FRAGMENTS" ]; then
+        echo "No $CHANGELOG_DIR fragments in this merge request — nothing to check."
+        exit 0
+      fi
+      echo "Fragments in this merge request:"
+      printf '%s\n' "$FRAGMENTS" | sed 's/^/    /'
+
+      NEW=$(read_version < "$VERSION_FILE")
+      OLD=$(git show "$BASE:$VERSION_FILE" 2>/dev/null | read_version || true)
+
+      if [ -z "$OLD" ]; then
+        echo "note: $VERSION_FILE does not exist at the merge base; treating $NEW as a bump."
+      elif [ "$NEW" = "$OLD" ]; then
+        echo "error: this merge request adds a $CHANGELOG_DIR fragment but leaves"    >&2
+        echo "  $VERSION_FILE at $NEW, the same value as $CI_MERGE_REQUEST_TARGET_BRANCH_NAME." >&2
+        echo ""                                                                        >&2
+        echo "  Merging it would fold the fragment into a version that is already"     >&2
+        echo "  released, and the tag job would then skip because that tag exists —"    >&2
+        echo "  so the change would ship with no release of its own."                   >&2
+        echo ""                                                                         >&2
+        echo "  If you did bump it, check whether a rebase applied the bump away:"      >&2
+        echo "    git diff origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME..HEAD -- $VERSION_FILE" >&2
+        echo "  That is silent — rebasing onto a main that already released your"       >&2
+        echo "  target version drops the change with no conflict."                      >&2
+        exit 1
+      fi
+
+      VERSION_RE=$(printf '%s' "$NEW" | sed 's/[][\.*^$\/]/\\&/g')
+      if [ -f "$CHANGELOG_FILE" ] && grep -q "^## \[$VERSION_RE\]" "$CHANGELOG_FILE"; then
+        echo "error: $VERSION_FILE is $NEW, but $CHANGELOG_FILE already has a"  >&2
+        echo "  '## [$NEW]' section — that version has been released."          >&2
+        echo "  Pick a version that has not shipped yet."                       >&2
+        exit 1
+      fi
+
+      echo "OK: $VERSION_FILE moved ${OLD:-<absent>} -> $NEW and $NEW has no section yet."
+  rules:
+    # Fork MRs require a project member to trigger jobs — prevents untrusted
+    # code from running CI automatically. allow_failure is set explicitly
+    # because GitLab defaults manual jobs to allow_failure: true, which would
+    # let a triggered-and-failing check pass the merge request anyway.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID != $CI_PROJECT_ID
+      when: manual
+      allow_failure: false
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
