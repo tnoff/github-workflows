@@ -77,6 +77,36 @@
     OUTPUT_NAME: $CI_PROJECT_NAME:ci
     OUTPUT_TARBALL: image.tar
     CACHE_NAME: $CI_PROJECT_NAME-$DOCKERFILE_NAME
+    # Ephemeral-storage bounds. Build jobs previously carried cpu and memory
+    # requests/limits and NOTHING for disk, so the scheduler packed them blind
+    # to the one resource buildkit actually exhausts, and a runaway build took
+    # the NODE down instead of being evicted itself.
+    #
+    # Measured 2026-08-23 on the ci pool (allocatable ephemeral-storage is
+    # 34.92 GiB/node — kubelet reserves ~6.7 GiB of the 41.66 GiB disk):
+    #   magic-mirror-docker  37.7 GiB  -> exceeded a whole node's allocatable
+    #                                     alone; kubelet + CRI-O died, every
+    #                                     pod on the node was evicted
+    #   magic-mirror (slim)  12.0 GiB  after the -slim base change
+    #   discord-bot          16.4 GiB  <- the binding constraint below
+    #   backstage            10.4-12.9 GiB
+    #
+    # REQUEST is the scheduling lever: at 12Gi the scheduler fits at most two
+    # build jobs per node (24 of 34.92 GiB), leaving headroom for system pods
+    # and the helper container.
+    #
+    # LIMIT is the blast-radius lever: 18Gi sits above discord-bot's observed
+    # 16.4 GiB so nothing that passes today starts failing, while being far
+    # below the 34.92 GiB that let one build kill a node. A build that exceeds
+    # it is evicted with a clear "ephemeral local storage usage exceeds" reason
+    # rather than silently wedging the kubelet.
+    #
+    # Two builds both pinned at their limit is 36 GiB against 34.92 GiB
+    # allocatable, so the ceiling is not absolute — but eviction then hits the
+    # offending POD, which is the entire point. Revisit if discord-bot's
+    # five-image fan-out grows; it is what holds the limit this high.
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: 12Gi
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: 18Gi
   before_script:
     - |
       # Ephemeral in-job buildkitd — the cluster buildkitd Deployment was
