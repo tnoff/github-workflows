@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.57] - 2026-08-25
+
+### Fixed
+
+- `.github/workflows/trufflehog.yml`: the default `extra_args` no longer passes `--fail`. The action already invokes the CLI with `--fail --no-update --github-actions` and appends `extra_args` after it, and trufflehog's flag parser rejects a repeated flag outright — `flag 'fail' cannot be repeated`. The `--only-verified --fail` default was carried over verbatim from the GitLab template, where the CLI was invoked directly and both flags were ours to supply. Caught by the first real run, `tnoff/MMM-BartTimes#3`.
+
 ## [0.0.56] - 2026-08-25
 
 ### Added

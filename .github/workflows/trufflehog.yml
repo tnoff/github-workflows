@@ -31,10 +31,16 @@ on:
         type: boolean
         default: true
       extra_args:
-        description: 'Extra flags passed to trufflehog'
+        description: >-
+          Extra flags appended to the trufflehog invocation. Do NOT pass --fail
+          here: the action already runs the CLI with `--fail --no-update
+          --github-actions` and appends this after, and trufflehog's flag parser
+          rejects a repeated flag outright ("flag 'fail' cannot be repeated").
+          The GitLab template's default was `--only-verified --fail` because it
+          invoked the CLI directly; only the first half carries over.
         required: false
         type: string
-        default: '--only-verified --fail'
+        default: '--only-verified'
       exclude_paths:
         description: >-
           Path to a file of newline-separated regex path excludes, relative to
