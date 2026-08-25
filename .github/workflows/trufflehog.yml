@@ -1,0 +1,102 @@
+name: TruffleHog
+
+# Reusable workflow: scan a repository for verified secrets.
+#
+# On a pull_request event, scans only the commits the PR adds (base..head).
+# On any other event -- push to the default branch, schedule, manual -- scans
+# the full history of the current branch.
+#
+# GitLab counterpart: /gitlab/trufflehog.yml. That template ran the trufflehog
+# container directly because the self-hosted runner had no marketplace; here the
+# maintained action is the pinned dependency instead, per the migration's
+# decision to retire pre-baked CI images in favour of pinned actions.
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     secrets:
+#       uses: tnoff/github-workflows/.github/workflows/trufflehog.yml@<sha>
+#
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+      extra_args:
+        description: 'Extra flags passed to trufflehog'
+        required: false
+        type: string
+        default: '--only-verified --fail'
+      exclude_paths:
+        description: >-
+          Path to a file of newline-separated regex path excludes, relative to
+          the repo root. Empty (default) excludes nothing.
+        required: false
+        type: string
+        default: ''
+      full_history:
+        description: 'Force a full-history scan even on a pull_request event'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  scan:
+    name: Scan for secrets
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # Full history: a range scan needs the merge base, and a full scan
+          # needs every commit. Matches GIT_DEPTH: 0 on the GitLab template.
+          fetch-depth: 0
+
+      - name: Resolve exclude-paths flag
+        id: excludes
+        env:
+          EXCLUDE_PATHS: ${{ inputs.exclude_paths }}
+        run: |
+          set -eu
+          if [ -z "${EXCLUDE_PATHS}" ]; then
+            echo "flag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -f "${EXCLUDE_PATHS}" ]; then
+            echo "::error::exclude_paths=${EXCLUDE_PATHS} does not exist"
+            exit 1
+          fi
+          echo "flag=--exclude-paths=${EXCLUDE_PATHS}" >> "$GITHUB_OUTPUT"
+
+      # Range scan. github.event.pull_request.base.sha is the base branch tip as
+      # of the PR, which is what the action wants for base..head -- the direct
+      # analogue of CI_MERGE_REQUEST_DIFF_BASE_SHA on the GitLab template.
+      - name: Scan pull request commits
+        if: github.event_name == 'pull_request' && !inputs.full_history
+        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b  # v3.97.1
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          extra_args: ${{ steps.excludes.outputs.flag }} ${{ inputs.extra_args }}
+
+      - name: Scan full history
+        if: github.event_name != 'pull_request' || inputs.full_history
+        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b  # v3.97.1
+        with:
+          path: ./
+          extra_args: ${{ steps.excludes.outputs.flag }} ${{ inputs.extra_args }}

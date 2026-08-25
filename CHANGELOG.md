@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.56] - 2026-08-25
+
+### Added
+
+- `.github/workflows/trufflehog.yml`, `.github/workflows/renovate.yml`, `.github/workflows/branch-cleanup.yml`: GitHub Actions counterparts to the GitLab templates of the same name, as `workflow_call` reusable workflows. These are the first four templates ported for the GitHub-canonical migration, chosen because 15-19 repos each consume them. All actions are pinned to full commit SHAs per `check-action-pins.yml`.
+- `renovate.yml` deliberately drops `GITHUB_COM_TOKEN`. On GitLab, Renovate needed a separate github.com token purely for release notes, and an undefined variable expanding to an empty string 401'd every lookup. When the platform *is* GitHub the platform token covers release notes, so the whole failure mode is gone rather than ported.
+- `branch-cleanup.yml` needs no PAT: the default `GITHUB_TOKEN` with `contents: write` can delete refs, unlike the GitLab template which required `CLEANUP_TOKEN`.
+
+### Changed
+
+- `.github/workflows/bump-version.yml`: rewritten to match what the GitLab template grew after this tree was last touched in April. It now computes the target version from the *base* branch rather than the branch tip, marks its own commits with an `X-Auto-Bump: version` trailer, and on re-run peels and recomputes that commit against the current base before pushing with `--force-with-lease`. Without the peel a stale bump stacks and is applied away on rebase with no conflict to notice — which matters here because Renovate rebases constantly. Also adds conflict-free changelog fragments (`bump_changelog` / `changelog_dir`) and an optional `git_push_token`; pushing with the default `GITHUB_TOKEN` triggers no downstream workflow, so required checks never report on the bump commit.
+
 ## [0.0.55] - 2026-08-18
 
 ### Removed

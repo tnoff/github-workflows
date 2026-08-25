@@ -1,0 +1,95 @@
+name: Renovate
+
+# Reusable workflow: run self-hosted Renovate against the calling repository.
+#
+# Self-hosted rather than the Mend GitHub App, so the tuned config in each
+# repo's renovate.json keeps its grouping, minimumReleaseAge and automerge
+# scoping. Run it on a schedule.
+#
+# GitLab counterpart: /gitlab/renovate.yml.
+#
+# Two things that template needed and this one does not:
+#
+#   * RENOVATE_ENDPOINT / RENOVATE_PLATFORM=gitlab. Platform is github here.
+#   * GITHUB_COM_TOKEN. On GitLab, Renovate needed a *separate* github.com
+#     token purely to fetch release notes, and the fleet spent a long outage on
+#     that variable being undefined -- GitLab expands an undefined variable to
+#     an empty string, Renovate presents the empty token, and github.com 401s
+#     every release lookup (see terraform-admin!37, docs!87). When the platform
+#     *is* github, the platform token covers release notes and the whole failure
+#     mode disappears. Do not reintroduce it.
+#
+# Usage in a consumer repo:
+#
+#   on:
+#     schedule:
+#       - cron: '10 3 * * 6'
+#     workflow_dispatch:
+#
+#   jobs:
+#     renovate:
+#       uses: tnoff/github-workflows/.github/workflows/renovate.yml@<sha>
+#       secrets:
+#         renovate_token: ${{ secrets.RENOVATE_TOKEN }}
+#
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      log_level:
+        description: 'Renovate LOG_LEVEL (debug when diagnosing a run)'
+        required: false
+        type: string
+        default: 'info'
+      allowed_commands:
+        description: >-
+          JSON array of regexes allowlisting repo-level postUpgradeTasks
+          commands. postUpgrade shell is refused unless allowlisted in the
+          self-hosted (global) config -- a repo's renovate.json cannot authorize
+          its own commands. The option is `allowedCommands`; it was renamed from
+          `allowedPostUpgradeCommands` in Renovate v40, so the old env var is
+          silently ignored and leaves the allowlist empty. Repos without a
+          matching script simply never match.
+        required: false
+        type: string
+        default: '["^bash ci/renovate-terraform-docs\\.sh$"]'
+      timeout_minutes:
+        description: >-
+          Backstop, not a budget. Renovate itself finishes in 1.5-12 min across
+          these repos; this only caps a wedged run.
+        required: false
+        type: number
+        default: 30
+    secrets:
+      renovate_token:
+        description: >-
+          GitHub token Renovate authenticates and opens PRs with. Needs repo +
+          workflow scope -- workflow scope is required or Renovate cannot open a
+          PR that touches .github/workflows, which is exactly what the
+          github-actions manager does.
+        required: true
+
+jobs:
+  renovate:
+    name: Renovate
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Renovate
+        uses: renovatebot/github-action@5402b206248e5a8c8427a15102702eb9c1793efc  # v46.2.4
+        with:
+          token: ${{ secrets.renovate_token }}
+        env:
+          RENOVATE_PLATFORM: github
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          RENOVATE_ALLOWED_COMMANDS: ${{ inputs.allowed_commands }}
+          LOG_LEVEL: ${{ inputs.log_level }}

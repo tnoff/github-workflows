@@ -1,5 +1,44 @@
 name: Bump version file on PR
 
+# Reusable workflow: auto-bump the version on a PR branch.
+#
+# Compares the version on the PR branch against its base. If they match (no
+# bump yet), increments and pushes back to the head branch. Exits cleanly if a
+# *human* already bumped, which is what prevents loops.
+#
+# Recompute-on-rebase: the bump commit carries an "X-Auto-Bump: version"
+# trailer. On a re-run -- e.g. after the base branch moved, which Renovate
+# causes constantly via rebaseWhen: behind-base-branch -- the job peels its own
+# prior bump commit and recomputes against the current base, then pushes with
+# --force-with-lease. Without this the stale bump stacks and is silently
+# applied away on rebase, leaving the PR with no bump and no conflict to notice.
+#
+# Supports plain-text version files (one line, "1.2.3") and JSON files
+# (package.json). JSON is rewritten with jq at 2-space indent.
+#
+# GitLab counterpart: /gitlab/bump-version.yml.
+#
+# ---------------------------------------------------------------------------
+# Push token
+# ---------------------------------------------------------------------------
+# Set git_push_token. A push made with the default GITHUB_TOKEN does NOT
+# trigger further workflow runs -- GitHub's infinite-loop guard -- so the PR
+# head advances past the last checked commit and required checks never report
+# on the commit that is actually merged. This is the same trap the GitLab
+# template documents for CI_JOB_TOKEN, and it lands the same way: a PR that
+# looks unchecked with no failing job to point at.
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     bump-version:
+#       uses: tnoff/github-workflows/.github/workflows/bump-version.yml@<sha>
+#       with:
+#         version_file: package.json
+#         version_file_type: json
+#       secrets:
+#         git_push_token: ${{ secrets.GIT_PUSH_TOKEN }}
+#
 on:
   workflow_call:
     inputs:
@@ -20,33 +59,55 @@ on:
         description: 'Path to version file'
         required: false
         type: string
-        default: './VERSION'
+        default: 'VERSION'
       version_file_type:
-        description: 'File type: plain (raw text) or json'
+        description: "File type: 'plain' (raw text) or 'json'"
         required: false
         type: string
         default: 'plain'
       version_json_key:
-        description: 'Key to extract when version_file_type is json (e.g. "version" for package.json)'
+        description: 'Key holding the version when version_file_type is json'
         required: false
         type: string
         default: 'version'
+      bump_changelog:
+        description: >-
+          Write a changelog *fragment* for this change under changelog_dir.
+          Conflict-free -- each PR drops a uniquely-named file rather than
+          editing the shared changelog. Fragments are folded in at release time
+          by assemble-changelog.
+        required: false
+        type: boolean
+        default: false
+      changelog_dir:
+        description: 'Directory holding unassembled changelog fragments'
+        required: false
+        type: string
+        default: 'changelog.d'
       runner_labels:
         description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
         required: false
         type: string
         default: '["ubuntu-24.04"]'
       allow_fork_prs:
-        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        description: >-
+          Allow fork PRs to run this workflow. Defaults false: this workflow
+          pushes to the head branch, which a fork PR does not grant.
         required: false
         type: boolean
         default: false
+    secrets:
+      git_push_token:
+        description: >-
+          Token used to push the bump commit. Optional, but strongly
+          recommended -- see the note above on why GITHUB_TOKEN is not enough.
+        required: false
     outputs:
       old_version:
-        description: 'Version read from version file before bump'
+        description: 'Version on the branch before the bump'
         value: ${{ jobs.bump.outputs.old_version }}
       new_version:
-        description: 'Version after bump (same as old_version if skipped)'
+        description: 'Version after the bump (same as old_version if skipped)'
         value: ${{ jobs.bump.outputs.new_version }}
       version_bumped:
         description: 'Whether a bump commit was pushed to the PR branch (true/false)'
@@ -55,11 +116,13 @@ on:
 jobs:
   check:
     name: Check path filters
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
     outputs:
       should_run: ${{ steps.filter.outputs.should_run }}
     steps:
-      - name: Check out the repo
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: ${{ github.head_ref }}
@@ -71,38 +134,43 @@ jobs:
           PATHS_JSON: ${{ inputs.paths }}
           BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "$PATHS_JSON" = "[]" ] || [ -z "$PATHS_JSON" ]; then
+          set -euo pipefail
+          if [ "${PATHS_JSON}" = "[]" ] || [ -z "${PATHS_JSON}" ]; then
             echo "No path filter configured, will run"
-            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ -z "$BASE_REF" ]; then
+          if [ -z "${BASE_REF}" ]; then
             echo "Not a PR event, skipping path filter check, will run"
-            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           CHANGED_FILES=$(git diff --name-only "origin/${BASE_REF}...HEAD")
-          if [ -z "$CHANGED_FILES" ]; then
+          if [ -z "${CHANGED_FILES}" ]; then
             echo "No changed files detected"
-            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           SHOULD_RUN=false
           while IFS= read -r pattern; do
             while IFS= read -r file; do
-              case "$file" in
+              # SC2254: $pattern is deliberately unquoted. `paths` is a JSON
+              # array of *glob* patterns and glob expansion is the feature --
+              # quoting would turn "src/**" into a literal filename match.
+              # shellcheck disable=SC2254
+              case "${file}" in
                 $pattern)
-                  echo "Matched: $file (pattern: $pattern)"
+                  echo "Matched: ${file} (pattern: ${pattern})"
                   SHOULD_RUN=true
                   break 2
                   ;;
               esac
-            done <<< "$CHANGED_FILES"
-          done < <(echo "$PATHS_JSON" | jq -r '.[]')
-          if [ "$SHOULD_RUN" = "false" ]; then
+            done <<< "${CHANGED_FILES}"
+          done < <(echo "${PATHS_JSON}" | jq -r '.[]')
+          if [ "${SHOULD_RUN}" = "false" ]; then
             echo "No changed files matched the path filter, skipping bump"
           fi
-          echo "should_run=${SHOULD_RUN}" >> $GITHUB_OUTPUT
+          echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
 
   bump:
     name: Bump version in PR
@@ -111,131 +179,160 @@ jobs:
     if: >-
       needs.check.outputs.should_run == 'true' &&
       (inputs.allow_fork_prs ||
-      github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: write
     outputs:
-      old_version: ${{ steps.final.outputs.old_version }}
-      new_version: ${{ steps.final.outputs.new_version }}
-      version_bumped: ${{ steps.final.outputs.version_bumped }}
+      old_version: ${{ steps.bump.outputs.old_version }}
+      new_version: ${{ steps.bump.outputs.new_version }}
+      version_bumped: ${{ steps.bump.outputs.version_bumped }}
     steps:
-      - name: Check out the repo
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
+          # Falls back to GITHUB_TOKEN when no PAT is supplied. The push then
+          # succeeds but triggers no downstream workflow -- see the header.
+          token: ${{ secrets.git_push_token || github.token }}
 
-      - name: Read current version
-        id: read
+      # Tested in shell rather than a step-level `if`: the secrets context is
+      # not available to `if`, only to `env` and `with`.
+      - name: Warn when pushing with GITHUB_TOKEN
+        env:
+          GIT_PUSH_TOKEN: ${{ secrets.git_push_token }}
         run: |
-          if [ "${{ inputs.version_file_type }}" = "json" ]; then
-            VERSION=$(jq -r '.${{ inputs.version_json_key }}' '${{ inputs.version_file }}')
-          else
-            VERSION=$(cat '${{ inputs.version_file }}')
+          if [ -z "${GIT_PUSH_TOKEN}" ]; then
+            echo "::warning::git_push_token not set -- pushing with GITHUB_TOKEN," \
+              "which does not trigger a follow-up workflow run." \
+              "Required checks will not report on the bump commit."
           fi
-          # Strip any trailing whitespace/newlines
-          VERSION=$(echo "${VERSION}" | tr -d '[:space:]')
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Check if version already bumped in PR
-        id: check
+      - name: Bump
+        id: bump
         env:
           BASE_REF: ${{ github.base_ref }}
-          VERSION_FILE: ${{ inputs.version_file }}
-          CURRENT_VERSION: ${{ steps.read.outputs.version }}
-        run: |
-          BASE_VERSION=$(git show "origin/${BASE_REF}:${VERSION_FILE}" 2>/dev/null | tr -d '[:space:]' || echo "")
-          echo "Base branch version: ${BASE_VERSION}"
-          echo "PR head version:     ${CURRENT_VERSION}"
-          if [ -n "${BASE_VERSION}" ] && [ "${BASE_VERSION}" != "${CURRENT_VERSION}" ]; then
-            echo "already_bumped=true" >> $GITHUB_OUTPUT
-            echo "Version already changed in this PR, skipping bump"
-          else
-            echo "already_bumped=false" >> $GITHUB_OUTPUT
-            echo "Version unchanged from base, will bump"
-          fi
-
-      - name: Calculate new version
-        id: calc
-        if: steps.check.outputs.already_bumped == 'false'
-        env:
+          HEAD_REF: ${{ github.head_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           BUMP_TYPE: ${{ inputs.bump_type }}
-          OLD_VERSION: ${{ steps.read.outputs.version }}
+          VERSION_FILE: ${{ inputs.version_file }}
+          VERSION_FILE_TYPE: ${{ inputs.version_file_type }}
+          VERSION_JSON_KEY: ${{ inputs.version_json_key }}
+          BUMP_CHANGELOG: ${{ inputs.bump_changelog }}
+          CHANGELOG_DIR: ${{ inputs.changelog_dir }}
         run: |
-          MAJOR=$(echo "${OLD_VERSION}" | cut -d. -f1)
-          MINOR=$(echo "${OLD_VERSION}" | cut -d. -f2)
-          PATCH=$(echo "${OLD_VERSION}" | cut -d. -f3)
+          set -euo pipefail
+
+          read_version() {
+            if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+              jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' "$1" | tr -d '[:space:]'
+            else
+              tr -d '[:space:]' < "$1"
+            fi
+          }
+
+          git fetch origin "${BASE_REF}" "${HEAD_REF}"
+
+          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+            BASE_VERSION=$(git show "origin/${BASE_REF}:${VERSION_FILE}" \
+              | jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' | tr -d '[:space:]')
+          else
+            BASE_VERSION=$(git show "origin/${BASE_REF}:${VERSION_FILE}" | tr -d '[:space:]')
+          fi
+          CURRENT_VERSION=$(read_version "${VERSION_FILE}")
+
+          # The version this branch should carry: base, bumped once.
+          MAJOR=$(echo "${BASE_VERSION}" | cut -d. -f1)
+          MINOR=$(echo "${BASE_VERSION}" | cut -d. -f2)
+          PATCH=$(echo "${BASE_VERSION}" | cut -d. -f3)
           case "${BUMP_TYPE}" in
-            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH+1)) ;;
-            *)
-              echo "Unknown bump_type '${BUMP_TYPE}'. Must be major, minor, or patch."
-              exit 1
-              ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) echo "::error::Unknown bump_type '${BUMP_TYPE}'. Must be major, minor, or patch."; exit 1 ;;
           esac
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
-          echo "Bumping ${BUMP_TYPE}: ${OLD_VERSION} -> ${NEW_VERSION}"
 
-      - name: Write new version
-        if: steps.check.outputs.already_bumped == 'false'
-        env:
-          NEW_VERSION: ${{ steps.calc.outputs.new_version }}
-        run: |
-          if [ "${{ inputs.version_file_type }}" = "json" ]; then
-            jq --arg key '${{ inputs.version_json_key }}' --arg val "${NEW_VERSION}" \
-              '.[$key] = $val' '${{ inputs.version_file }}' > /tmp/_version_tmp \
-              && mv /tmp/_version_tmp '${{ inputs.version_file }}'
-          else
-            echo "${NEW_VERSION}" > '${{ inputs.version_file }}'
+          echo "base=${BASE_VERSION}  head=${CURRENT_VERSION}  target=${NEW_VERSION}"
+
+          {
+            echo "old_version=${CURRENT_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+          # Is the tip our own auto-bump commit?
+          OURS=false
+          if git log -1 --format='%B' | grep -qi '^X-Auto-Bump: version[[:space:]]*$'; then
+            OURS=true
           fi
 
-      - name: Commit and push bump
-        if: steps.check.outputs.already_bumped == 'false'
-        env:
-          NEW_VERSION: ${{ steps.calc.outputs.new_version }}
-          BUMP_TYPE: ${{ inputs.bump_type }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
+          # Steady state: the branch already carries the target. This is also
+          # what breaks the push -> workflow -> push loop, since our own bump
+          # commit re-triggers this job and it then exits here.
+          if [ "${CURRENT_VERSION}" = "${NEW_VERSION}" ]; then
+            echo "Branch already at ${NEW_VERSION} (base ${BASE_VERSION}) -- nothing to do."
+            {
+              echo "new_version=${CURRENT_VERSION}"
+              echo "version_bumped=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A human bumped it themselves: respect it, leave the branch alone.
+          if [ "${CURRENT_VERSION}" != "${BASE_VERSION}" ] && [ "${OURS}" != "true" ]; then
+            echo "Manual bump (${BASE_VERSION} -> ${CURRENT_VERSION}) -- leaving as-is."
+            {
+              echo "new_version=${CURRENT_VERSION}"
+              echo "version_bumped=false"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Recompute-on-rebase: peel our own now-stale bump so the version is
+          # re-derived against the current base rather than stacking.
+          if [ "${OURS}" = "true" ]; then
+            echo "Peeling prior auto-bump commit; recomputing against origin/${BASE_REF}"
+            git reset --hard HEAD~1
+          fi
+
+          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+            TMP=$(mktemp)
+            jq --indent 2 --arg key "${VERSION_JSON_KEY}" --arg val "${NEW_VERSION}" \
+              '.[$key] = $val' "${VERSION_FILE}" > "${TMP}"
+            mv "${TMP}" "${VERSION_FILE}"
+          else
+            echo "${NEW_VERSION}" > "${VERSION_FILE}"
+          fi
+
+          git add "${VERSION_FILE}"
+
+          # Changelog fragments: each PR drops a uniquely-named file rather than
+          # prepending to a shared changelog, which collides when two PRs land
+          # in one run. Fragment name derives from the head branch, so it is
+          # stable across rebases and disjoint between PRs.
+          if [ "${BUMP_CHANGELOG}" = "true" ]; then
+            mkdir -p "${CHANGELOG_DIR}"
+            ENTRY=$(printf '%s' "${PR_TITLE}" | sed -nE \
+              's/^(fix|chore|feat)\(deps\): update dependency (.+) to (v?[^[:space:]]+)$/Bumped \2 to \3/p')
+            if [ -z "${ENTRY}" ]; then
+              ENTRY="${PR_TITLE:-Patch bump to ${NEW_VERSION}}"
+            fi
+            SLUG=$(printf '%s' "${HEAD_REF}" | tr '/ ' '--' | tr -cd '[:alnum:]-' | cut -c1-60)
+            FRAGMENT="${CHANGELOG_DIR}/${SLUG:-pr-${PR_NUMBER:-0}}.md"
+            printf '%s\n' "${ENTRY}" > "${FRAGMENT}"
+            git add "${CHANGELOG_DIR}"
+            echo "Wrote changelog fragment ${FRAGMENT}: ${ENTRY}"
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add '${{ inputs.version_file }}'
-          git commit -m "chore: bump ${BUMP_TYPE} version to ${NEW_VERSION}"
-          git push origin "HEAD:${HEAD_REF}"
+          # The trailer marks this as our own commit so a later run can peel and
+          # recompute it. force-with-lease replaces a peeled stale bump safely
+          # while refusing to clobber a concurrent Renovate rebase.
+          git commit -m "chore: bump ${BUMP_TYPE} version to ${NEW_VERSION}" -m "X-Auto-Bump: version"
+          git push --force-with-lease origin "HEAD:${HEAD_REF}"
 
-      - name: Set final outputs
-        id: final
-        env:
-          OLD_VERSION: ${{ steps.read.outputs.version }}
-          NEW_VERSION: ${{ steps.calc.outputs.new_version }}
-          ALREADY_BUMPED: ${{ steps.check.outputs.already_bumped }}
-        run: |
-          echo "old_version=${OLD_VERSION}" >> $GITHUB_OUTPUT
-          if [ "${ALREADY_BUMPED}" = "true" ]; then
-            echo "new_version=${OLD_VERSION}" >> $GITHUB_OUTPUT
-            echo "version_bumped=false" >> $GITHUB_OUTPUT
-          else
-            echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
-            echo "version_bumped=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Summary
-        if: always()
-        env:
-          OLD_VERSION: ${{ steps.read.outputs.version }}
-          NEW_VERSION: ${{ steps.calc.outputs.new_version }}
-          ALREADY_BUMPED: ${{ steps.check.outputs.already_bumped }}
-          BUMP_TYPE: ${{ inputs.bump_type }}
-        run: |
-          echo "## Version Bump Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **File:** \`${{ inputs.version_file }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Bump type:** \`${BUMP_TYPE}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${ALREADY_BUMPED}" = "true" ]; then
-            echo "**Skipped** - version already changed in this PR (\`${OLD_VERSION}\`)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Bumped** \`${OLD_VERSION}\` → \`${NEW_VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "new_version=${NEW_VERSION}"
+            echo "version_bumped=true"
+          } >> "$GITHUB_OUTPUT"

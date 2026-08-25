@@ -1,0 +1,118 @@
+name: Branch cleanup
+
+# Reusable workflow: prune stale automation branches.
+#
+# Image-bump and Renovate jobs push throwaway branches (`bump/*`,
+# `renovate/*`). delete_branch_on_merge only deletes on MERGE -- superseded or
+# closed PRs leave the branch behind, so they pile up indefinitely. This deletes
+# branches that match an allowlist pattern, are old enough, and are NOT the head
+# branch of any open PR. Anything outside the pattern (hand-made feature
+# branches, the default branch, protected branches) is never touched.
+#
+# Safe by construction: deleting a `bump/*` or `renovate/*` branch is reversible
+# -- the bump job re-pushes on the next image, and Renovate recreates the branch
+# if the dependency is still outstanding.
+#
+# Run it on a schedule, alongside Renovate.
+#
+# GitLab counterpart: /gitlab/branch-cleanup.yml. Same predicate, rewritten
+# against the GitHub API. The default GITHUB_TOKEN with contents: write can
+# delete refs, so unlike the GitLab template this needs no PAT.
+#
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      branch_pattern:
+        description: 'ERE of branch names eligible for deletion'
+        required: false
+        type: string
+        default: '^(bump|renovate)/'
+      age_days:
+        description: 'Minimum age in days (by last commit) before a branch is eligible'
+        required: false
+        type: number
+        default: 30
+      dry_run:
+        description: 'Log candidates without deleting'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  cleanup:
+    name: Prune stale automation branches
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BRANCH_PATTERN: ${{ inputs.branch_pattern }}
+          AGE_DAYS: ${{ inputs.age_days }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          echo "branch-cleanup: pattern=${BRANCH_PATTERN} age>=${AGE_DAYS}d dry_run=${DRY_RUN}"
+
+          cutoff=$(( $(date +%s) - AGE_DAYS * 86400 ))
+
+          # Head branch of every OPEN PR -- never delete these.
+          open_prs=$(mktemp)
+          gh api "repos/${REPO}/pulls?state=open&per_page=100" --paginate \
+            --jq '.[].head.ref' > "${open_prs}"
+
+          # name <TAB> protected <TAB> tip-sha
+          #
+          # The loop runs in a pipeline subshell, so it deliberately keeps no
+          # counters -- they would be lost on exit. Every decision is logged
+          # instead, which is what the job summary is read for anyway.
+          gh api "repos/${REPO}/branches?per_page=100" --paginate \
+            --jq '.[] | [.name, (.protected | tostring), .commit.sha] | @tsv' \
+          | while IFS="$(printf '\t')" read -r name protected sha; do
+              [ -n "${name}" ] || continue
+              if [ "${name}" = "${DEFAULT_BRANCH}" ] || [ "${protected}" = "true" ]; then
+                continue
+              fi
+              printf '%s' "${name}" | grep -Eq "${BRANCH_PATTERN}" || continue
+
+              if grep -Fxq "${name}" "${open_prs}"; then
+                echo "keep (open PR): ${name}"
+                continue
+              fi
+
+              # Committer date of the tip. An unreadable date keeps the branch --
+              # never delete on a date we cannot parse.
+              committed=$(gh api "repos/${REPO}/commits/${sha}" \
+                --jq '.commit.committer.date' 2>/dev/null || echo "")
+              if [ -z "${committed}" ]; then
+                echo "keep (unreadable date): ${name}"
+                continue
+              fi
+              epoch=$(date -d "${committed}" +%s 2>/dev/null || echo "")
+              if [ -z "${epoch}" ]; then
+                echo "keep (unparseable date): ${name}"
+                continue
+              fi
+              if [ "${epoch}" -ge "${cutoff}" ]; then
+                continue
+              fi
+
+              if [ "${DRY_RUN}" = "false" ]; then
+                gh api --method DELETE "repos/${REPO}/git/refs/heads/${name}" --silent
+                echo "deleted: ${name}"
+              else
+                echo "would delete: ${name}"
+              fi
+            done
+
+          rm -f "${open_prs}"
+          echo "branch-cleanup: done"
