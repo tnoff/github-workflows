@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.60] - 2026-08-25
+
+### Added
+
+- `.github/workflows/spellcheck.yml`, `tag.yml`, `release.yml` and `assemble-changelog.yml`: the remaining templates `dappertable` consumes. With `tox.yml` from 0.0.59 that completes all 9 of its includes.
+- `tag.yml` replaces the dotenv artifact handoff — `build.env` carrying VERSION / TAG_CREATED / TAG_EXISTS to the release job — with workflow outputs. `release.yml` replaces 25 lines of curl + jq + HTTP-code handling against the GitLab releases API with one `gh release create`.
+- `spellcheck.yml` drops `$CI_SPELLCHECK_IMAGE` along with the rest of `ci-base-images`: aspell from apt and pyspelling from pip take seconds on a hosted runner and need no registry, cleanup CronJob or pull secret.
+- The changelog-format logic in `assemble-changelog.yml` is carried over unchanged — the awk that turns a fragment paragraph into a bullet, and the awk that splices the new section above the first `## [` heading. Both encode bugs already paid for, and neither is about the platform.
+
+### Note
+
+- `assemble-changelog.yml` pushes to the **default branch**, which the fleet's rulesets now protect. Its `push_token` must belong to an identity the ruleset bypasses — they bypass the repository-admin role only, so an admin PAT works and a write-scoped bot token is rejected at the push rather than by the API call before it. It must also not be the default `GITHUB_TOKEN`: the fragment-gating design depends on the fold push triggering a follow-up run, and a `GITHUB_TOKEN` push triggers nothing — so the tag is never cut and the release never happens, with every job green.
+
 ## [0.0.59] - 2026-08-25
 
 ### Added

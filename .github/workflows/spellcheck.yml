@@ -1,0 +1,75 @@
+name: Spellcheck
+
+# Reusable workflow: run pyspelling against a project's spellcheck config.
+#
+# GitLab counterpart: /gitlab/spellcheck.yml, which ran on the pre-baked
+# $CI_SPELLCHECK_IMAGE. That image is retired with ci-base-images; aspell comes
+# from apt and pyspelling from pip, which together take a few seconds on a
+# hosted runner and need no registry, no cleanup CronJob and no pull secret.
+#
+# The consumer must commit a pyspelling config at `config` that defines the
+# matrix entry named by `name`.
+#
+on:
+  workflow_call:
+    inputs:
+      name:
+        description: 'pyspelling --name (the matrix entry in the config)'
+        required: false
+        type: string
+        default: 'Markdown'
+      config:
+        description: 'Path to the pyspelling config'
+        required: false
+        type: string
+        default: '.spellcheck/spellcheck.yml'
+      aspell_packages:
+        description: 'apt packages providing the dictionaries pyspelling needs'
+        required: false
+        type: string
+        default: 'aspell aspell-en'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  spellcheck:
+    name: Spellcheck
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Install aspell and pyspelling
+        env:
+          ASPELL_PACKAGES: ${{ inputs.aspell_packages }}
+        run: |
+          sudo apt-get update -qq
+          # Intentionally unquoted: a space-separated package list.
+          # shellcheck disable=SC2086
+          sudo apt-get install -y -qq $ASPELL_PACKAGES
+          pip install pyspelling
+
+      - name: Run pyspelling
+        env:
+          CONFIG: ${{ inputs.config }}
+          NAME: ${{ inputs.name }}
+        run: pyspelling -c "$CONFIG" --name "$NAME"

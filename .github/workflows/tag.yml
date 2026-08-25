@@ -1,91 +1,136 @@
-name: Tag commit on version file
+name: Tag
 
+# Reusable workflow: tag a commit from a version file.
+#
+# GitLab counterpart: /gitlab/tag.yml. Two mechanical differences:
+#
+#   * The dotenv artifact (build.env carrying VERSION / TAG_CREATED /
+#     TAG_EXISTS into the release job) becomes workflow outputs. Same handoff,
+#     no artifact.
+#   * Tag existence is checked with `git ls-remote`, unchanged -- it is the
+#     cheapest check that does not depend on local tag state.
+#
+# ---------------------------------------------------------------------------
+# push_token, and why the default GITHUB_TOKEN will not do
+# ---------------------------------------------------------------------------
+# A tag pushed with the default GITHUB_TOKEN triggers no downstream workflow
+# run. More importantly for repos with a branch ruleset: the token must belong
+# to an identity the ruleset lets through. The fleet's rulesets bypass the
+# repository-admin role, so an admin's PAT works and a write-scoped bot token
+# does not.
+#
 on:
   workflow_call:
     inputs:
       version_file:
-        description: 'Path to version file'
+        description: 'Path to the version file'
         required: false
         type: string
-        default: './VERSION'
+        default: 'VERSION'
       version_file_type:
-        description: 'File type: plain (raw text) or json'
+        description: "File type: 'plain' or 'json'"
         required: false
         type: string
         default: 'plain'
       version_json_key:
-        description: 'Key to extract when version_file_type is json (e.g. "version" for package.json)'
+        description: 'Key holding the version when version_file_type is json'
         required: false
         type: string
         default: 'version'
+      gate_on_fragments:
+        description: >-
+          Set true on repos wired for assemble-changelog. When changelog
+          fragments are still pending, this job defers (tag_created=false) so
+          assemble-changelog folds and pushes first; that push fires a
+          follow-up run where the fragment directory is empty, this gate
+          passes, and tag/release run against the assembled changelog.
+        required: false
+        type: boolean
+        default: false
+      changelog_dir:
+        description: 'Directory of unassembled fragments; only read when gate_on_fragments is true'
+        required: false
+        type: string
+        default: 'changelog.d'
       runner_labels:
         description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
         required: false
         type: string
         default: '["ubuntu-24.04"]'
-      allow_fork_prs:
-        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
-        required: false
-        type: boolean
-        default: true
+    secrets:
+      push_token:
+        description: 'PAT used to push the tag. See the note above.'
+        required: true
     outputs:
       version:
-        description: 'Version read from version file (with v prefix)'
-        value: ${{ jobs.tag_build.outputs.version }}
+        description: 'The tag, with a leading v (empty when deferred)'
+        value: ${{ jobs.tag.outputs.version }}
       tag_created:
-        description: 'Whether a new tag was created (true/false)'
-        value: ${{ jobs.tag_build.outputs.tag_created }}
+        description: 'Whether a new tag was pushed (true/false)'
+        value: ${{ jobs.tag.outputs.tag_created }}
       tag_exists:
         description: 'Whether the tag already existed (true/false)'
-        value: ${{ jobs.tag_build.outputs.tag_exists }}
+        value: ${{ jobs.tag.outputs.tag_exists }}
 
 jobs:
-  tag_build:
-    name: Tag Build if doesn't exist already
+  tag:
+    name: Tag
     runs-on: ${{ fromJson(inputs.runner_labels) }}
-    if: >-
-      inputs.allow_fork_prs ||
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag_created: ${{ steps.check-tag.outputs.exists != 'true' }}
-      tag_exists: ${{ steps.check-tag.outputs.exists }}
+      version: ${{ steps.tag.outputs.version }}
+      tag_created: ${{ steps.tag.outputs.tag_created }}
+      tag_exists: ${{ steps.tag.outputs.tag_exists }}
     steps:
-      - name: Check out the repo
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ inputs.version_file_type }}" = "json" ]; then
-            echo "version=v$(jq -r '.${{ inputs.version_json_key }}' '${{ inputs.version_file }}')" >> $GITHUB_OUTPUT
-          else
-            echo "version=v$(cat '${{ inputs.version_file }}')" >> $GITHUB_OUTPUT
-          fi
-      - name: Check if tag already exists
-        id: check-tag
-        run: |
-          if git ls-remote --tags origin "${{ steps.version.outputs.version }}" | grep -q .; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-      - name: Add tag
-        if: steps.check-tag.outputs.exists != 'true'
-        run: |
-          git tag "${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.push_token }}
 
-      - name: Summary
+      - name: Tag
+        id: tag
+        env:
+          VERSION_FILE: ${{ inputs.version_file }}
+          VERSION_FILE_TYPE: ${{ inputs.version_file_type }}
+          VERSION_JSON_KEY: ${{ inputs.version_json_key }}
+          GATE_ON_FRAGMENTS: ${{ inputs.gate_on_fragments }}
+          CHANGELOG_DIR: ${{ inputs.changelog_dir }}
         run: |
-          echo "## 🏷️ Git Tag Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.check-tag.outputs.exists }}" = "true" ]; then
-            echo "ℹ️ Tag already exists - no new tag created" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "✅ New tag created successfully" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+
+          emit() {
+            {
+              echo "version=${1}"
+              echo "tag_created=${2}"
+              echo "tag_exists=${3}"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          # Pre-fold pipeline: fragments still pending, so defer and let
+          # assemble-changelog fold and push first.
+          if [ "${GATE_ON_FRAGMENTS}" = "true" ] && ls "${CHANGELOG_DIR}"/*.md >/dev/null 2>&1; then
+            echo "Changelog fragments pending in ${CHANGELOG_DIR} -- deferring tag to the post-assemble run."
+            emit "" "false" "false"
+            exit 0
           fi
+
+          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+            VERSION="v$(jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' "${VERSION_FILE}" | tr -d '[:space:]')"
+          else
+            VERSION="v$(tr -d '[:space:]' < "${VERSION_FILE}")"
+          fi
+
+          if git ls-remote --tags origin "refs/tags/${VERSION}" | grep -q .; then
+            echo "Tag ${VERSION} already exists -- skipping"
+            emit "${VERSION}" "false" "true"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${VERSION}"
+          git push origin "${VERSION}"
+          echo "Tag ${VERSION} created"
+          emit "${VERSION}" "true" "false"

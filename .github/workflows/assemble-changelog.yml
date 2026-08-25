@@ -1,0 +1,178 @@
+name: Assemble changelog
+
+# Reusable workflow: fold accumulated changelog.d/*.md fragments into
+# CHANGELOG.md on the default branch at release time, delete them, and push
+# back. Idempotent -- a no-op when there are no fragments, which is what keeps
+# the run it triggers from looping.
+#
+# GitLab counterpart: /gitlab/assemble-changelog.yml. The awk that turns a
+# fragment into bullets and the awk that splices the new section above the
+# first `## [` heading are carried over unchanged: that logic is about the
+# changelog format, not the platform, and both encode bugs already paid for
+# (a hard-wrapped paragraph becoming one bullet per line, a fragment written
+# with its own `- ` becoming `- - `).
+#
+# ---------------------------------------------------------------------------
+# This workflow pushes to the DEFAULT BRANCH, which the fleet's rulesets protect
+# ---------------------------------------------------------------------------
+# Two requirements follow, and both fail confusingly if missed:
+#
+#   1. push_token must belong to an identity the ruleset lets through. The
+#      fleet's rulesets bypass the repository-admin role only, so an admin's
+#      PAT works and a write-scoped bot token is rejected by the push, not by
+#      the API call before it.
+#   2. push_token must not be the default GITHUB_TOKEN. The whole
+#      fragment-gating design depends on this push triggering a FOLLOW-UP run:
+#      the tag job defers while fragments are pending, the fold push clears
+#      them, and the follow-up run tags against the assembled changelog. A push
+#      made with GITHUB_TOKEN triggers nothing, so the tag is never cut and the
+#      release never happens -- with every job green.
+#
+on:
+  workflow_call:
+    inputs:
+      version_file:
+        description: 'Path to the version file'
+        required: false
+        type: string
+        default: 'VERSION'
+      version_file_type:
+        description: "File type: 'plain' or 'json'"
+        required: false
+        type: string
+        default: 'plain'
+      version_json_key:
+        description: 'Key holding the version when version_file_type is json'
+        required: false
+        type: string
+        default: 'version'
+      changelog_dir:
+        description: 'Directory holding unassembled fragments'
+        required: false
+        type: string
+        default: 'changelog.d'
+      changelog_file:
+        description: 'Path to the assembled changelog'
+        required: false
+        type: string
+        default: 'CHANGELOG.md'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    secrets:
+      push_token:
+        description: 'PAT used to push the fold commit. See the note above.'
+        required: true
+    outputs:
+      assembled:
+        description: 'Whether a fold commit was pushed (true/false)'
+        value: ${{ jobs.assemble.outputs.assembled }}
+
+jobs:
+  assemble:
+    name: Assemble changelog
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: write
+    outputs:
+      assembled: ${{ steps.assemble.outputs.assembled }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.push_token }}
+
+      - name: Assemble
+        id: assemble
+        env:
+          VERSION_FILE: ${{ inputs.version_file }}
+          VERSION_FILE_TYPE: ${{ inputs.version_file_type }}
+          VERSION_JSON_KEY: ${{ inputs.version_json_key }}
+          CHANGELOG_DIR: ${{ inputs.changelog_dir }}
+          CHANGELOG_FILE: ${{ inputs.changelog_file }}
+        run: |
+          set -euo pipefail
+
+          if ! ls "${CHANGELOG_DIR}"/*.md >/dev/null 2>&1; then
+            echo "No changelog fragments in ${CHANGELOG_DIR} -- nothing to assemble."
+            echo "assembled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+            VERSION=$(jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' "${VERSION_FILE}" | tr -d '[:space:]')
+          else
+            VERSION=$(tr -d '[:space:]' < "${VERSION_FILE}")
+          fi
+          DATE=$(date -u +%Y-%m-%d)
+
+          # Refuse to fold into an already-released version. Without this, a
+          # fragment whose PR forgot to bump the version file is filed under a
+          # version that is already tagged: a second "## [$VERSION]" block is
+          # appended, the tag job then finds the tag present and skips, release
+          # skips with it, and every job goes green while the change ships with
+          # no release of its own. Choosing the next version is the author's
+          # call, so fail loudly instead of guessing.
+          VERSION_RE=$(printf '%s' "${VERSION}" | sed 's/[][\.*^$\/]/\\&/g')
+          if [ -f "${CHANGELOG_FILE}" ] && grep -q "^## \[${VERSION_RE}\]" "${CHANGELOG_FILE}"; then
+            echo "::error::${CHANGELOG_FILE} has a '## [${VERSION}]' section but fragments remain."
+            {
+              echo "  Fragments still pending in ${CHANGELOG_DIR}:"
+              printf '    %s\n' "${CHANGELOG_DIR}"/*.md
+              echo "  Whatever added them did not bump ${VERSION_FILE}, so folding now"
+              echo "  would file the change under an already-released version and it"
+              echo "  would never be tagged. Bump ${VERSION_FILE} and re-run."
+            } >&2
+            exit 1
+          fi
+
+          SECTION=$(mktemp)
+          {
+            printf '## [%s] - %s\n\n### Changed\n\n' "${VERSION}" "${DATE}"
+            for f in "${CHANGELOG_DIR}"/*.md; do
+              # A bullet is a PARAGRAPH, not a physical line. Prefixing every
+              # non-empty line with '- ' broke three ways: a hard-wrapped
+              # paragraph became one bullet per line, a fragment already
+              # written with '- ' became '- - ', and a deliberate list could
+              # not be distinguished from a wrapped sentence.
+              awk '
+                function flush() { if (buf != "") { print "- " buf; buf = "" } }
+                /^[[:space:]]*$/                { flush(); next }
+                /^[[:space:]]*[-*][[:space:]]+/ { flush(); sub(/^[[:space:]]*[-*][[:space:]]+/, ""); buf = $0; next }
+                                                { sub(/^[[:space:]]+/, ""); buf = (buf == "" ? $0 : buf " " $0) }
+                END                             { flush() }
+              ' "$f"
+            done
+            printf '\n'
+          } > "${SECTION}"
+
+          TMP=$(mktemp)
+          if [ -f "${CHANGELOG_FILE}" ] && grep -q '^## \[' "${CHANGELOG_FILE}"; then
+            awk -v sect="${SECTION}" '
+              !done && /^## \[/ { while ((getline l < sect) > 0) print l; done=1 }
+              { print }
+            ' "${CHANGELOG_FILE}" > "${TMP}"
+          elif [ -f "${CHANGELOG_FILE}" ]; then
+            cat "${CHANGELOG_FILE}" "${SECTION}" > "${TMP}"
+          else
+            printf '# Changelog\n\n' > "${TMP}"
+            cat "${SECTION}" >> "${TMP}"
+          fi
+          mv "${TMP}" "${CHANGELOG_FILE}"
+
+          git rm -q "${CHANGELOG_DIR}"/*.md
+
+          echo "Assembled changelog section for ${VERSION}:"
+          echo "----"
+          cat "${SECTION}"
+          echo "----"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${CHANGELOG_FILE}"
+          git commit -m "docs: assemble changelog for ${VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "assembled=true" >> "$GITHUB_OUTPUT"
