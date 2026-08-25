@@ -1,0 +1,61 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Fleet defaults for repos that have flipped to GitHub-canonical. Parallel to renovate/default.json, which stays in place for repos still on GitLab CI -- both have to coexist until the migration finishes. Anything platform-neutral is deliberately identical between the two; every difference below is a GitLab coupling that does not survive the move.\n\nTwo things from the GitLab preset are absent rather than changed, and neither absence is visible in the rules below. hostRules capping github.com to concurrentRequestLimit 2 is gone: it existed only to stop the terraform manager's provider fan-out (oracle/oci ships 13 platform zips at ~65MiB each) OOMKilling a 1500Mi build container on the self-hosted runner. A hosted runner has 16GB, so the cap now only costs wall-clock. The packageRule disabling the gitlabci-include manager is gone because that manager is never enabled here.",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": false,
+  "rebaseWhen": "behind-base-branch",
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 0,
+  "gitIgnoredAuthors": [
+    "github-actions[bot]@users.noreply.github.com"
+  ],
+  "packageRules": [
+    {
+      "description": "Automerge the shared reusable-workflow pin. Every consumer SHA-pins tnoff/github-workflows in `uses:`, so one commit there fans out into one PR per repo -- 123 of the 400 dependency MRs merged fleet-wide in the 8 weeks to 2026-08-14 were exactly this, every one hand-merged. The change was already reviewed when it landed on main there; re-approving the same SHA per repo is duplicate review. The consumer's own checks still have to go green first. This replaces the git-refs rule in the GitLab preset, which matched https://gitlab.com/tnoff-projects/github-workflows through the custom regex manager -- on GitHub the built-in github-actions manager handles it, so both the datasource and the package name differ.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "tnoff/github-workflows"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Batch the cloud SDKs. Unchanged from the GitLab preset -- oci, boto3, awscli and friends cut releases most weekdays, so each arrives as its own PR on every run. One grouped PR plus a 7-day floor collapses the intermediate point releases. No additionalBranchPrefix on purpose: each repo's own config decides whether these land under dev- and therefore whether they cut a release.",
+      "matchPackageNames": [
+        "oci",
+        "oci-cli",
+        "awscli",
+        "boto3",
+        "botocore",
+        "s3transfer",
+        "google-api-python-client",
+        "google-auth",
+        "google-auth-*",
+        "kubernetes",
+        "python-gitlab"
+      ],
+      "groupName": "cloud sdks",
+      "minimumReleaseAge": "7 days"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "terraform-modules is still GitLab-hosted and still SHA-pinned in .tf files, so this carries over unchanged. The .gitlab-ci.yml include-ref manager from the GitLab preset is deliberately absent: the built-in github-actions manager already tracks `uses: ...@<sha>`.",
+      "customType": "regex",
+      "fileMatch": [
+        "\\.tf$"
+      ],
+      "matchStrings": [
+        "source\\s*=\\s*\"git::(?<depName>https?://[^?\"]+?/terraform-modules)\\.git(?://[^?\"]*)?\\?ref=(?<currentDigest>[a-f0-9]{40})\""
+      ],
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "main"
+    }
+  ]
+}

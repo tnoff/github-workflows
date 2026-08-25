@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.61] - 2026-08-25
+
+### Added
+
+- `renovate/default-github.json`: fleet Renovate defaults for repos that have flipped to GitHub-canonical, parallel to `renovate/default.json`. Both have to coexist until the migration finishes, so this is a second preset rather than an edit to the first.
+- Found while flipping `dappertable`: **17 of 26 repos extend the GitLab-hosted presets** (`gitlab>tnoff-projects/github-workflows//renovate/…`). The pilot was one of the nine that do not, which is why it never surfaced. Flipped repos extend `github>tnoff/github-workflows//renovate/default-github` instead, so nothing on the GitHub side needs GitLab credentials to resolve its own config.
+
+### Changed from the GitLab preset
+
+- `gitIgnoredAuthors` becomes `github-actions[bot]@users.noreply.github.com`. Without this Renovate's modified-branch guard sees the bump-version commit as a foreign edit and refuses to rebase the branch.
+- The shared-pin automerge rule is retargeted from the `git-refs` datasource and `https://gitlab.com/tnoff-projects/github-workflows` to the built-in `github-actions` manager and `tnoff/github-workflows` — both the datasource and the package name differ on GitHub.
+- `hostRules` capping github.com to `concurrentRequestLimit: 2` is **absent**. It existed only to stop the terraform manager's provider fan-out (oracle/oci ships 13 platform zips at ~65MiB each) OOMKilling a 1500Mi build container on the self-hosted runner; a hosted runner has 16GB, so the cap now only costs wall-clock.
+- The packageRule disabling `gitlabci-include` is **absent** — that manager is never enabled here.
+- The `.gitlab-ci.yml` include-ref `customManager` is **absent**, superseded by the built-in `github-actions` manager. The terraform-modules `.tf` regex carries over unchanged, since that repo is still GitLab-hosted and still SHA-pinned.
+- `renovate/python.json` is unchanged and shared by both: its content is platform-neutral, and the `dev-` prefix stays load-bearing because the ported `bump-version` keys on `renovate/dev-` exactly as the GitLab job keyed on the same prefix.
+
 ## [0.0.60] - 2026-08-25
 
 ### Added
