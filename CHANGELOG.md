@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.59] - 2026-08-25
+
+### Added
+
+- `.github/workflows/tox.yml`: Python tox matrix plus a diff-cover gate on changed lines, the Actions counterpart to `/gitlab/tox-pipeline.yml`. Three jobs — `discover` reads `tox -l` and emits a JSON array, `tox` consumes it via `fromJSON()` as a matrix, and `diff-cover` gates the highest interpreter's `coverage.xml` against the PR base branch.
+- It is roughly a third the size of the GitLab template, because most of that template is workarounds that do not survive the move. The dynamic parent→child pipeline existed only because GitLab cannot take a YAML list as a job-level variable, so the matrix had to be generated as YAML, published as an artifact and triggered as a child pipeline. The ~60-line S3 cache of `.tox/` existed because self-hosted runners had no free cache, and it carried an OCI SigV4 workaround per line — `AWS_DEFAULT_REGION` vs `AWS_REGION`, path addressing for the underscore bucket, `when_required` checksums, and staging the tarball to a file because streaming forced chunked signing that OCI rejects. `actions/cache` replaces all of it. `dependencies: []` existed to stop GitLab pulling 1.27 GB of unrelated artifacts, and the re-emitted `default: retry:` block existed because child pipelines do not inherit it.
+
 ## [0.0.58] - 2026-08-25
 
 ### Added

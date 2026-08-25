@@ -1,0 +1,245 @@
+name: Tox
+
+# Reusable workflow: a Python tox matrix plus a diff-cover gate against the
+# base branch.
+#
+# GitLab counterpart: /gitlab/tox-pipeline.yml (328 lines). This is far
+# smaller, and every piece that vanished did so for a reason worth recording --
+# each was a workaround for something GitLab or the self-hosted runners could
+# not do, not a feature being dropped.
+#
+#   * The dynamic parent -> child pipeline is gone. It existed because
+#     "GitLab CI doesn't support taking a YAML list as a job-level variable",
+#     so the matrix had to be generated as a YAML file, published as an
+#     artifact, and triggered as a child pipeline. Actions takes a matrix from
+#     an expression, so `discover` simply outputs JSON and `tox` consumes it
+#     with fromJSON().
+#   * The ~60-line S3 cache of `.tox/` is gone, along with every OCI
+#     SigV4 workaround it carried -- AWS_DEFAULT_REGION vs AWS_REGION,
+#     AWS_S3_ADDRESSING_STYLE=path for the underscore bucket, when_required
+#     checksums, and staging the tarball to a file because a streamed upload
+#     forced chunked signing that OCI rejects. actions/cache is free, built in,
+#     and none of those failure modes exist here.
+#   * `dependencies: []` is gone. It existed to stop GitLab auto-downloading
+#     artifacts from every preceding stage -- 1.27 GB of image tarballs in
+#     discord-bot's case. Actions does not auto-download artifacts.
+#   * The re-emitted `default: retry:` block is gone. It existed because child
+#     pipelines do not inherit the parent's `default:`.
+#   * TOX_BASE_IMAGE / TOX_GENERATE_IMAGE are gone with ci-base-images.
+#     actions/setup-python plus `extra_apt` covers what the pre-baked image did,
+#     without a registry, a cleanup CronJob, or a pull.
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     tox:
+#       uses: tnoff/github-workflows/.github/workflows/tox.yml@<sha>
+#       with:
+#         extra_apt: 'sqlite3 ffmpeg'
+#
+on:
+  workflow_call:
+    inputs:
+      extra_apt:
+        description: >-
+          Space-separated apt packages needed by the test suite (e.g.
+          "sqlite3 ffmpeg"). Empty installs nothing -- unlike the GitLab
+          template, git is already present on the runner.
+        required: false
+        type: string
+        default: ''
+      diff_cover_fail_under:
+        description: 'Coverage threshold for changed lines, percent'
+        required: false
+        type: number
+        default: 100
+      diff_cover_compare_branch:
+        description: >-
+          Branch to diff against. Empty (default) uses the pull request's own
+          base branch, which is what the GitLab template's hardcoded
+          origin/main meant in practice.
+        required: false
+        type: string
+        default: ''
+      discover_python_version:
+        description: 'Python used to run `tox -l` in the discover job'
+        required: false
+        type: string
+        default: '3.x'
+      cache_tox:
+        description: 'Cache the .tox virtualenvs between runs'
+        required: false
+        type: boolean
+        default: true
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      python_versions:
+        description: 'JSON array of Python versions discovered from tox.ini'
+        value: ${{ jobs.discover.outputs.versions }}
+
+jobs:
+  discover:
+    name: Discover tox environments
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    outputs:
+      versions: ${{ steps.list.outputs.versions }}
+      latest: ${{ steps.list.outputs.latest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.discover_python_version }}
+
+      - name: Install tox
+        run: pip install tox
+
+      - name: List environments
+        id: list
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re, subprocess
+
+          result = subprocess.run(['tox', '-l'], capture_output=True, text=True, check=True)
+          versions = []
+          for env in result.stdout.strip().splitlines():
+              m = re.fullmatch(r'py(\d)(\d+)', env.strip())
+              if m:
+                  versions.append(f'{m.group(1)}.{m.group(2)}')
+
+          if not versions:
+              raise SystemExit(
+                  'No py<X><Y> envs found via `tox -l`; this workflow assumes a '
+                  'Python tox.ini with py3X-style envs.'
+              )
+
+          # Highest version is the canonical coverage producer for diff-cover,
+          # matching the GitLab template's choice.
+          latest = max(versions, key=lambda v: tuple(int(p) for p in v.split('.')))
+          print(f'versions={versions}  latest={latest}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write(f'versions={json.dumps(versions)}\n')
+              fh.write(f'latest={latest}\n')
+          PYEOF
+
+  tox:
+    name: tox (${{ matrix.python }})
+    needs: discover
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    strategy:
+      # One failing interpreter should not hide the others.
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(needs.discover.outputs.versions) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install system packages
+        if: inputs.extra_apt != ''
+        env:
+          EXTRA_APT: ${{ inputs.extra_apt }}
+        run: |
+          sudo apt-get update -qq
+          # Intentionally unquoted: EXTRA_APT is a space-separated package list.
+          # shellcheck disable=SC2086
+          sudo apt-get install -y -qq $EXTRA_APT
+
+      - name: Restore .tox cache
+        if: inputs.cache_tox
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: .tox
+          # Same key shape as the GitLab template's S3 object: per Python
+          # minor, invalidated by a dependency change.
+          key: tox-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml', 'tox.ini') }}
+
+      - name: Install tox
+        run: pip install tox
+
+      - name: Run tox
+        env:
+          PY: ${{ matrix.python }}
+        run: tox -e "py${PY//./}"
+
+      # Only the highest interpreter's coverage feeds diff-cover, matching the
+      # GitLab template's `needs: job "tox: [latest]"`.
+      - name: Upload coverage
+        if: matrix.python == needs.discover.outputs.latest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 1
+          if-no-files-found: error
+
+  diff-cover:
+    name: Coverage on changed lines
+    needs: [discover, tox]
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          # diff-cover needs the merge base, so the full history is required --
+          # the GitLab template's GIT_DEPTH: "0".
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ needs.discover.outputs.latest }}
+
+      - name: Download coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: coverage-xml
+
+      - name: Install diff-cover
+        run: pip install diff-cover
+
+      - name: Check coverage on changed lines
+        env:
+          COMPARE_INPUT: ${{ inputs.diff_cover_compare_branch }}
+          BASE_REF: ${{ github.base_ref }}
+          FAIL_UNDER: ${{ inputs.diff_cover_fail_under }}
+        run: |
+          set -euo pipefail
+          if [ -n "${COMPARE_INPUT}" ]; then
+            COMPARE="${COMPARE_INPUT}"
+          elif [ -n "${BASE_REF}" ]; then
+            COMPARE="origin/${BASE_REF}"
+          else
+            COMPARE="origin/${{ github.event.repository.default_branch }}"
+          fi
+          # fetch-depth: 0 fetches the checked-out ref's history; the base
+          # branch still has to be fetched explicitly before it can be diffed.
+          git fetch --no-tags --quiet origin "${COMPARE#origin/}"
+          echo "Comparing against ${COMPARE}"
+          diff-cover coverage.xml --compare-branch="${COMPARE}" --fail-under="${FAIL_UNDER}"
