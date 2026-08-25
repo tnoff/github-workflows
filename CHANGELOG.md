@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.58] - 2026-08-25
+
+### Added
+
+- `.github/workflows/renovate-auto-approve.yml`: approves (and optionally auto-merges) Renovate's own PRs, so CODEOWNERS plus a ruleset with `require_code_owner_review` stays satisfiable. GitHub does not permit a PR author to approve their own PR, so a bot-authored PR needs an approval from a different code owner before automerge can proceed.
+- Deliberately not a port of `dependabot-auto-approve.yml`. That one is built on `dependabot/fetch-metadata` for the semver level; Renovate has no equivalent action and encodes the update class in the branch name via `additionalBranchPrefix`, so the branch pattern is the filter instead.
+- Two failure modes are guarded rather than documented-and-hoped: the workflow refuses to run if `approval_token` belongs to the PR author (the self-approval case, which is what happens if it is handed Renovate's own token), and the header states that callers must keep `synchronize` in their `pull_request` trigger — rulesets set `dismiss_stale_reviews_on_push`, and `bump-version` pushes to Renovate branches after the PR opens, dismissing the approval. Re-firing on `synchronize` is what makes it converge.
+
 ## [0.0.57] - 2026-08-25
 
 ### Fixed
