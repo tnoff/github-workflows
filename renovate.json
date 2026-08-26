@@ -1,7 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Self-contained on purpose: this is one of the repos that never extended the shared preset, so the GitLab-to-GitHub preset swap does not apply here. The only change on the flip is the github-actions manager, which is what keeps the `uses:` SHA pins in this repo's own workflows current. gitlabci stays enabled while gitlab/*.yml is still consumed by the repos that have not flipped yet.",
   "extends": ["config:recommended"],
   "dependencyDashboard": false,
-  "enabledManagers": ["pre-commit", "dockerfile", "gitlabci"],
+  "enabledManagers": ["pre-commit", "dockerfile", "gitlabci", "github-actions"],
   "labels": ["dependencies"]
 }

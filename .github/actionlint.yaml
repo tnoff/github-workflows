@@ -1,0 +1,37 @@
+# actionlint configuration.
+#
+# The six files below are the April 2026 workflow tree: superseded by the
+# ported set (ocir-push -> docker-push, coverage-* -> tox, dependabot-auto-
+# approve -> renovate-auto-approve, check-action-pins -> the check-action-sha-
+# pin pre-commit hook) and consumed by nothing -- no repo in the fleet
+# references them, and the last Dependabot run here was 2026-04-25.
+#
+# They are scoped out of shellcheck rather than repaired because the intent is
+# deletion, not repair. Deleting them is a README change more than a workflow
+# change: README.md documents all six at `@v1` refs that no longer exist, so
+# the removal belongs with the README rewrite, not with turning CI on.
+#
+# Every suppressed finding is shellcheck `info` or `style` (SC2086, SC2129,
+# SC2002). Nothing here hides a warning or an error, and the scoping is
+# per-file: a new workflow gets the full check.
+#
+# Delete this file when those six workflows go.
+paths:
+  .github/workflows/check-action-pins.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'
+  .github/workflows/check-pr-labels.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'
+  .github/workflows/coverage-check.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'
+  .github/workflows/coverage-store.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'
+  .github/workflows/dependabot-auto-approve.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'
+  .github/workflows/ocir-push.yml:
+    ignore:
+      - 'shellcheck reported issue in this script'

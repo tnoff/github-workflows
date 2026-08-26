@@ -1,0 +1,25 @@
+name: Tag
+
+# Replaces .gitlab-ci.yml's push:tag job. Cuts a tag from VERSION on every
+# push to main; tag.yml no-ops when the tag already exists, so an unchanged
+# VERSION costs one skipped job.
+#
+# There is no release or changelog step because the GitLab config had neither:
+# this repo tags, and that is all.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: Tag
+    permissions:
+      contents: write
+    uses: ./.github/workflows/tag.yml
+    secrets:
+      push_token: ${{ secrets.GIT_PUSH_TOKEN }}
