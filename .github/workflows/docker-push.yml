@@ -67,16 +67,33 @@ on:
         required: false
         type: string
         default: '["ubuntu-24.04-arm"]'
-    secrets:
-      oci_registry:
+      # These three are INPUTS, not secrets, and that is load-bearing.
+      #
+      # GitHub refuses to set a job output whose value contains secret
+      # material, silently leaving it empty. The image reference is built from
+      # all three, so while they were secrets the `image` output came back
+      # blank in the calling workflow -- the push worked, but trigger-bump then
+      # sent an empty IMAGE_NAME to docker-apps, where an empty pipeline
+      # variable OVERRODE the job's own value and the bump failed with
+      # "IMAGE_NAME not configured on this job".
+      #
+      # They are also not credentials: a registry host, an object-storage
+      # namespace and a repository name. They were masked on GitLab only
+      # because GitLab masks broadly. Only oci_username and oci_token are
+      # secret.
+      registry:
         description: 'OCIR registry host, e.g. iad.ocir.io'
         required: true
-      oci_namespace:
+        type: string
+      namespace:
         description: 'OCI object storage namespace'
         required: true
-      oci_repo_name:
+        type: string
+      repo_name:
         description: 'Repository name within the namespace'
         required: true
+        type: string
+    secrets:
       oci_username:
         description: 'OCIR username, <namespace>/<user>'
         required: true
@@ -111,9 +128,9 @@ jobs:
       - name: Resolve image reference and tags
         id: refs
         env:
-          REGISTRY: ${{ secrets.oci_registry }}
-          NAMESPACE: ${{ secrets.oci_namespace }}
-          REPO_NAME: ${{ secrets.oci_repo_name }}
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+          REPO_NAME: ${{ inputs.repo_name }}
           TAG_OVERRIDE: ${{ inputs.tag_override }}
         run: |
           set -euo pipefail
@@ -137,7 +154,7 @@ jobs:
       - name: Log in to OCIR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
-          registry: ${{ secrets.oci_registry }}
+          registry: ${{ inputs.registry }}
           username: ${{ secrets.oci_username }}
           password: ${{ secrets.oci_token }}
 

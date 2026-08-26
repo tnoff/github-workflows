@@ -111,6 +111,16 @@ jobs:
           [ -n "${TRIGGER_TOKEN}" ] || fail "trigger_token is empty"
           [ -n "${TARGET_PROJECT_ID}" ] || fail "target_project_id is empty"
 
+          # Refuse to fire with an empty image. A GitLab pipeline variable set
+          # to an empty string OVERRIDES the downstream job's own value, so
+          # sending variables[IMAGE_NAME]= is worse than sending nothing: the
+          # bump job fails with "IMAGE_NAME not configured on this job", which
+          # points at docker-apps rather than at the producer that sent the
+          # blank. Seen for real when `image` was derived from secrets and came
+          # back empty.
+          [ -n "${IMAGE}" ] || fail "image is empty -- refusing to send a blank IMAGE_NAME"
+          [ -n "${IMAGE_TAG}" ] || fail "image_tag is empty"
+
           echo "Triggering ${BUMP_SOURCE} bump: ${IMAGE}:${IMAGE_TAG}"
           if curl -sS --fail-with-body -X POST \
               --form "token=${TRIGGER_TOKEN}" \

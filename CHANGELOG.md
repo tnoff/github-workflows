@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.66] - 2026-08-26
+
+### Fixed
+
+- `docker-push.yml`: `registry`, `namespace` and `repo_name` move from **secrets to inputs**. GitHub refuses to set a job output whose value contains secret material, silently leaving it empty — and the image reference is built from all three, so the `image` output came back blank in the calling workflow. The push itself worked; the damage was downstream.
+- `trigger-bump.yml`: refuses to fire with an empty `image` or `image_tag`. A GitLab pipeline variable set to an empty string **overrides** the downstream job's own value, so sending `variables[IMAGE_NAME]=` is worse than sending nothing — the bump job failed with `IMAGE_NAME not configured on this job`, an error pointing at `docker-apps` rather than at the producer that sent the blank.
+- Found end-to-end on `database-backup`: image pushed fine, `image_tag: 844e62c` came through (it derives from `git rev-parse`), `image:` was empty, and the triggered pipeline on `docker-apps` failed. Consumers must pass the three as inputs and move them from `action_secrets` to `action_variables`.
+
+### Note
+
+- None of the three were ever credentials — a registry host, an object-storage namespace and a repository name. They were masked on GitLab only because GitLab masks broadly. Only `oci_username` and `oci_token` are secret.
+
 ## [0.0.65] - 2026-08-26
 
 ### Fixed
