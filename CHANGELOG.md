@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.64] - 2026-08-26
+
+### Added
+
+- `.github/workflows/trigger-bump.yml`: the last of the 13 GitLab templates. **All templates are now ported.**
+- This is the *transitional* shape, deliberately. `docker-apps` is private, does not exist on GitHub, and is scheduled last because it is the Flux source — so every image repo that flips before it still triggers a bump on the GitLab-hosted `docker-apps`. The mechanism is unchanged (a form POST to GitLab's pipeline trigger API); it just runs from an Action. When `docker-apps` flips this becomes a `repository_dispatch` and the GitLab trigger token goes away. Porting it twice is cheaper than blocking every image repo behind the last one.
+
+### Degraded until `docker-apps` flips
+
+- `SOURCE_PROJECT_ID` and `SOURCE_SHA` are **omitted**, so the bump MR loses its "Source MR" back-link and changelog compare link. Once a producer is GitHub-canonical its commits no longer exist on the stale GitLab copy, so those lookups would query a project ID that cannot resolve the SHA. The downstream job already treats missing values as the documented "producer predates this" path and omits the links, so sending unresolvable values would only buy two failed API calls per bump. The bump itself is unaffected.
+- A forward-looking `SOURCE_URL` is sent instead — current `docker-apps` ignores it harmlessly, and a GitHub-side successor can use it to restore the back-link.
+
 ## [0.0.63] - 2026-08-26
 
 ### Added

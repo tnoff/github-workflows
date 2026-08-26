@@ -1,0 +1,126 @@
+name: Trigger image pin bump
+
+# Reusable workflow: after pushing a new image, ask docker-apps to rewrite its
+# pin and open an MR.
+#
+# GitLab counterpart: /gitlab/trigger-bump.yml.
+#
+# ---------------------------------------------------------------------------
+# This is the transitional shape, and it is deliberate
+# ---------------------------------------------------------------------------
+# docker-apps is private, does not exist on GitHub, and is scheduled LAST in
+# the migration because it is the Flux source. So every image repo that flips
+# before it still has to trigger a bump on the GitLab-hosted docker-apps. The
+# mechanism is unchanged -- a form POST to GitLab's pipeline trigger API -- it
+# just runs from an Action instead of a GitLab job.
+#
+# When docker-apps flips, this becomes a `repository_dispatch` and the GitLab
+# trigger token goes away. Expect to port this file twice; that is cheaper than
+# blocking every image repo behind the last one.
+#
+# ---------------------------------------------------------------------------
+# What degrades until then
+# ---------------------------------------------------------------------------
+# The GitLab template also forwarded SOURCE_PROJECT_ID and SOURCE_SHA so the
+# downstream job could resolve the MR that produced the image and add two links
+# to the bump MR: a "Source MR" back-link and a changelog compare view.
+#
+# Both are omitted here, on purpose. Once a producer is GitHub-canonical its
+# commits no longer exist on the stale GitLab copy, so the downstream lookups
+# would query a project ID that cannot resolve the SHA and return nothing. The
+# downstream job treats missing values as the documented "producer predates
+# this" path and simply omits the links, so sending values that cannot resolve
+# would only buy two failed API calls per bump.
+#
+# The bump itself -- the part that matters -- is unaffected. `source_url` is
+# sent as a forward-looking extra that current docker-apps ignores harmlessly
+# and a GitHub-side successor can use to restore the back-link.
+#
+on:
+  workflow_call:
+    inputs:
+      bump_source:
+        description: 'Identifier for this producer; the downstream job gates on it'
+        required: true
+        type: string
+      image:
+        description: 'Full image reference without a tag'
+        required: true
+        type: string
+      image_tag:
+        description: 'Tag to pin to, normally the short commit SHA'
+        required: true
+        type: string
+      target_project_id:
+        description: 'Numeric GitLab project ID of docker-apps'
+        required: true
+        type: string
+      target_ref:
+        description: 'Branch on the downstream repo to trigger against'
+        required: false
+        type: string
+        default: 'main'
+      fail_on_error:
+        description: >-
+          Whether a failed trigger fails this workflow. Defaults false, matching
+          the GitLab job's allow_failure: true -- the image is already pushed,
+          so a downstream automation hiccup should not retroactively fail the
+          producer.
+        required: false
+        type: boolean
+        default: false
+      runner_labels:
+        description: 'Runner labels as JSON array'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    secrets:
+      trigger_token:
+        description: 'GitLab pipeline trigger token for the downstream project'
+        required: true
+
+jobs:
+  trigger:
+    name: Trigger bump
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Fire the downstream trigger
+        env:
+          TRIGGER_TOKEN: ${{ secrets.trigger_token }}
+          TARGET_PROJECT_ID: ${{ inputs.target_project_id }}
+          TARGET_REF: ${{ inputs.target_ref }}
+          BUMP_SOURCE: ${{ inputs.bump_source }}
+          IMAGE: ${{ inputs.image }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          fail() {
+            if [ "${FAIL_ON_ERROR}" = "true" ]; then
+              echo "::error::$1"
+              exit 1
+            fi
+            echo "::warning::$1 (not failing: the image is already pushed)"
+            exit 0
+          }
+
+          [ -n "${TRIGGER_TOKEN}" ] || fail "trigger_token is empty"
+          [ -n "${TARGET_PROJECT_ID}" ] || fail "target_project_id is empty"
+
+          echo "Triggering ${BUMP_SOURCE} bump: ${IMAGE}:${IMAGE_TAG}"
+          if curl -sS --fail-with-body -X POST \
+              --form "token=${TRIGGER_TOKEN}" \
+              --form "ref=${TARGET_REF}" \
+              --form "variables[BUMP_SOURCE]=${BUMP_SOURCE}" \
+              --form "variables[IMAGE_NAME]=${IMAGE}" \
+              --form "variables[IMAGE_TAG]=${IMAGE_TAG}" \
+              --form "variables[SOURCE_URL]=${SOURCE_URL}" \
+              "https://gitlab.com/api/v4/projects/${TARGET_PROJECT_ID}/trigger/pipeline"; then
+            echo "Trigger accepted."
+          else
+            fail "downstream trigger failed"
+          fi
