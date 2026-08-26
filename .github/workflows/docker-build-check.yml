@@ -130,9 +130,28 @@ jobs:
           IMAGE: build-check:${{ github.sha }}
         run: |
           set -euo pipefail
+
+          # The docker:// prefix is load-bearing. Without it trufflehog treats
+          # the name as a REGISTRY reference -- "otherwise an image registry is
+          # assumed" -- and tries to pull build-check:<sha> from Docker Hub,
+          # where it does not exist. That returns UNAUTHORIZED, scans 0 bytes,
+          # and still exits 0: a security check that passes having read nothing.
+          LOG=$(mktemp)
           # EXTRA_ARGS is intentionally unquoted: it is a flag list, not one arg.
           # shellcheck disable=SC2086
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             ghcr.io/trufflesecurity/trufflehog:latest \
-            docker --image "${IMAGE}" --fail --no-update ${EXTRA_ARGS}
+            docker --image "docker://${IMAGE}" --fail --no-update ${EXTRA_ARGS} \
+            2>&1 | tee "${LOG}"
+
+          # Belt and braces: assert the scan actually read the image. The prefix
+          # above fixes the known cause, but any future variant that resolves to
+          # an unreadable image would again pass silently, and a green scan that
+          # read nothing is worse than a red one.
+          BYTES=$(grep -o '"bytes": *[0-9]*' "${LOG}" | tail -1 | tr -dc '0-9')
+          if [ -z "${BYTES}" ] || [ "${BYTES}" -eq 0 ]; then
+            echo "::error::trufflehog scanned 0 bytes -- the image was not read, so this scan proves nothing."
+            exit 1
+          fi
+          echo "scanned ${BYTES} bytes"

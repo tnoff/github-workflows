@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.65] - 2026-08-26
+
+### Fixed
+
+- `docker-build-check.yml`: the image secret scan **read nothing and passed**. `trufflehog docker --image <name>` treats a bare name as a *registry* reference — "otherwise an image registry is assumed" — so it tried to pull the local-only `build-check:<sha>` tag from Docker Hub, got `UNAUTHORIZED`, scanned `"bytes": 0`, and still exited 0. Fixed with the `docker://` prefix, which points it at the local daemon.
+- Caught on the first real image build (`tnoff/database-backup#206`) and reproduced locally: a local-only tag without the prefix gives 0 bytes and exit 0, with the prefix gives 266 chunks and 8.9 MB. A bare `alpine:3` does *not* reproduce it, because that image genuinely exists on Docker Hub and gets pulled — which is why this passed review.
+- Added a guard that fails the step when the scan reports 0 bytes. The prefix fixes the known cause, but any future variant resolving to an unreadable image would pass silently again, and a green scan that read nothing is worse than a red one.
+
 ## [0.0.64] - 2026-08-26
 
 ### Added
