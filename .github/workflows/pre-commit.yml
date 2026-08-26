@@ -1,0 +1,84 @@
+name: pre-commit
+
+# Reusable workflow: run every pre-commit hook across the repository.
+#
+# There is no GitLab counterpart template, and that is the point. On GitLab
+# each repo that ran pre-commit inlined the same job into its own
+# .gitlab-ci.yml against the pre-baked $CI_PRE_COMMIT_IMAGE, so the same ~12
+# lines were copied per repo and the image was a fleet-wide dependency with an
+# OCIR repo and a cleanup CronJob behind it. Both go away here: one workflow,
+# and `pip install pre-commit` on a hosted runner.
+#
+# ---------------------------------------------------------------------------
+# Known gap, deliberately not built yet
+# ---------------------------------------------------------------------------
+# This installs Python tooling only. Repos whose hooks shell out to non-Python
+# binaries -- terraform and terraform-admin need `terraform fmt` and
+# terraform-docs -- cannot use this as written. That input gets added when
+# those repos flip, against their real hook set, rather than guessed at now.
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     pre-commit:
+#       uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@<sha>
+#
+on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      python_version:
+        description: 'Python used to run pre-commit itself, not the hooks'
+        required: false
+        type: string
+        default: '3.13'
+      extra_packages:
+        description: >-
+          Space-separated pip packages installed alongside pre-commit, for
+          hooks that import them. Empty (default) installs nothing extra.
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      # Hook environments, not pip wheels. A cold run builds a virtualenv per
+      # hook repo; the key is the config hash because that is exactly what
+      # invalidates them.
+      - name: Cache hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ inputs.python_version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        env:
+          EXTRA_PACKAGES: ${{ inputs.extra_packages }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --upgrade pip
+          # Unquoted on purpose: EXTRA_PACKAGES is a space-separated list and
+          # must word-split into separate arguments.
+          # shellcheck disable=SC2086
+          python -m pip install --quiet pre-commit ${EXTRA_PACKAGES}
+          pre-commit --version
+
+      - name: Run hooks
+        run: pre-commit run --all-files --show-diff-on-failure

@@ -1,0 +1,31 @@
+name: CI
+
+# This repo's OWN pull-request checks, ported from .gitlab-ci.yml's
+# pr-check stage. Not part of the reusable library -- the `self-` prefix
+# marks the handful of files here that are callers rather than callees.
+#
+# Every `uses:` below is a LOCAL path rather than a pinned
+# tnoff/github-workflows@<sha> ref, and that is the whole point: a local call
+# resolves against the caller's own commit, so a PR that edits trufflehog.yml
+# is checked by the edited trufflehog.yml. Until now these workflows were only
+# ever exercised by a consumer repo, after merge, after someone bumped a pin --
+# which is how !97's zero-byte scan and !98's empty output both reached main.
+
+on:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    name: pre-commit
+    uses: ./.github/workflows/pre-commit.yml
+
+  secrets:
+    name: Scan for secrets
+    uses: ./.github/workflows/trufflehog.yml
