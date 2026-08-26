@@ -43,6 +43,21 @@ on:
         required: false
         type: string
         default: ''
+      fetch_depth:
+        description: >-
+          Checkout depth. Defaults to 0 (full history), and the default is
+          deliberately the expensive one: a shallow clone does not make a
+          history-reading hook FAIL, it makes it quietly WRONG. `git log -1
+          --format=%ad -- <file>` on a truncated clone returns the shallow
+          boundary commit's date instead of the file's real last-touch date --
+          a plausible wrong answer, not an empty one. Measured in the docs repo
+          at depth 20: architecture/custom-keys.md reported 2026-07-22 against
+          a true 2026-07-14, and redis-sentinel-ha.md reported 2026-07-22
+          against a true 2026-07-20. Set 1 only when you have checked that no
+          hook reads git history, and expect to save seconds, not minutes.
+        required: false
+        type: number
+        default: 0
 
 jobs:
   pre-commit:
@@ -53,6 +68,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: ${{ inputs.fetch_depth }}
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
