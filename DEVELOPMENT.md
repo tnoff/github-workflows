@@ -78,6 +78,25 @@ actionlint -version
 
 You should see output like: `1.7.9 (built with go1.25.4 compiler for linux/amd64)`
 
+### Also install shellcheck
+
+actionlint runs the `run:` block of every step through **shellcheck**, but only
+if `shellcheck` is on `PATH`. Without it actionlint silently skips that entire
+class of check and still exits 0 — so a local run passes while CI fails.
+
+This is not hypothetical: the PR that turned this repo's own CI on passed
+`pre-commit run --all-files` locally and then failed in Actions with 131
+shellcheck findings, because `ubuntu-24.04` ships shellcheck and this laptop
+did not.
+
+```bash
+sudo apt install shellcheck   # or: brew install shellcheck
+shellcheck --version
+```
+
+A green local lint without shellcheck installed does not mean what it looks
+like it means.
+
 ## Running Workflow Checks
 
 ### Using the Lint Script
