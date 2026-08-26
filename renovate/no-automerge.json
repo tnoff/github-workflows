@@ -1,0 +1,13 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Disable automerge. Extend this LAST, after default-github and python, so it overrides their automerge rules -- the shared reusable-workflow pin in the former and the test-dependencies group in the latter.\n\nFor repos that have no branch ruleset, which on a personal account means every PRIVATE repo: private-repo rulesets require GitHub Pro, so there are no required status checks for GitHub's auto-merge to wait on. A Renovate PR would merge whether or not CI passed, which is strictly worse than the GitLab behaviour it replaces (only_allow_merge_if_pipeline_succeeds is true on docs, terraform and docker-apps today).\n\nA top-level \"automerge\": false does NOT achieve this -- packageRules are more specific and win over it, so the preset rules would still automerge. It has to be a catch-all packageRule applied after them.\n\nSee docs/projects/github-canonical-migration.md, 'The private-repo decision'.",
+  "packageRules": [
+    {
+      "description": "Catch-all: nothing automerges in this repo.",
+      "matchPackageNames": [
+        "*"
+      ],
+      "automerge": false
+    }
+  ]
+}

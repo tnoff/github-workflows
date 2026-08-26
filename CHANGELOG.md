@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.62] - 2026-08-26
+
+### Added
+
+- `renovate/no-automerge.json`: a catch-all preset that disables automerge, to be extended **last** so it overrides the automerge rules in `default-github` (the shared reusable-workflow pin) and `python` (the test-dependencies group).
+- It exists for repos with no branch ruleset, which on a personal account means every **private** repo: private-repo rulesets require GitHub Pro, so there are no required status checks for GitHub's auto-merge to wait on and a Renovate PR would merge whether or not CI passed. That is strictly worse than the GitLab behaviour it replaces — `only_allow_merge_if_pipeline_succeeds` is true on `docs`, `terraform` and `docker-apps` today.
+- Note a top-level `"automerge": false` does **not** work here: `packageRules` are more specific and win over it, so the preset rules would still automerge. It has to be a catch-all `packageRule` applied after them.
+
 ## [0.0.61] - 2026-08-25
 
 ### Added
