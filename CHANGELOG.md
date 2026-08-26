@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.63] - 2026-08-26
+
+### Added
+
+- `.github/workflows/docker-build-check.yml` and `.github/workflows/docker-push.yml`: the Actions counterparts to `/gitlab/buildkit-build-check.yml`, `/gitlab/trufflehog-image.yml` and `/gitlab/buildkit-docker-push.yml`. The bespoke buildkit machinery is dropped rather than ported.
+
+### Removed in the port
+
+- **The in-job buildkitd.** Both GitLab templates started an ephemeral `buildkitd` on a unix socket — which required a privileged pod — and drove it with `buildctl`, because the cluster buildkitd Deployment had been retired so the ci pool could scale to zero. `docker/setup-buildx-action` replaces it.
+- **The S3 layer cache, and the ephemeral-storage tuning it forced.** `--export-cache mode=max` writes every intermediate layer to disk before shipping it, which is why those jobs carried `KUBERNETES_EPHEMERAL_STORAGE_REQUEST: 12Gi` / `LIMIT: 18Gi` after a build took a node down. `discord-bot` measured 16.4 GiB — more than a GitHub-hosted runner's ~14 GB, so the GitLab shape would not have fitted at all. The GitHub cache backend has no equivalent local multiplier.
+- **The image-handoff bucket.** `build-check` exported a `docker save` tarball to OCI Object Storage keyed by pipeline ID so the separate scan job could fetch it. That existed only because two GitLab jobs are two pods; here the image is already in the local daemon, so build and scan are one job. For `discord-bot` that turns five build jobs plus five scan jobs into five — and job count is what GitHub bills.
+- **The base64 wrapping of OCI credentials.** `OCI_USERNAME_64` and friends were encoded because GitLab masking requires single-line values with a restricted character set. GitHub secrets have no such constraint.
+- **The double build.** The GitLab push job ran `buildctl` twice, once per tag, because a single build takes one `--output`. `build-push-action` takes a tag list, so the image is built once and both tags share a digest.
+
 ## [0.0.62] - 2026-08-26
 
 ### Added
