@@ -48,6 +48,26 @@ on:
         required: false
         type: string
         default: ''
+      pre_commands:
+        description: >-
+          Shell run after extra_apt and before tox, in each matrix leg. For
+          test suites that need a SERVICE rather than a package -- apt can
+          install postgres but cannot leave you a running cluster with a
+          known password, and the runner user is not root.
+
+          Deliberately free-form rather than a `postgres: true` flag. A
+          reusable workflow cannot attach a service container conditionally
+          (a declared service always starts), so a boolean would spin up
+          postgres for every consumer. This keeps the setup in the repo that
+          needs it -- discord-bot passes
+          `sudo sh tests/start_postgres_for_ci.sh`, reusing the script it
+          already had for the GitLab runner, which needed root for exactly
+          the same reason.
+
+          Runs with `set -euo pipefail`; a non-zero exit fails the leg.
+        required: false
+        type: string
+        default: ''
       diff_cover_fail_under:
         description: 'Coverage threshold for changed lines, percent'
         required: false
@@ -168,6 +188,17 @@ jobs:
           # Intentionally unquoted: EXTRA_APT is a space-separated package list.
           # shellcheck disable=SC2086
           sudo apt-get install -y -qq $EXTRA_APT
+
+      - name: Run pre-commands
+        if: inputs.pre_commands != ''
+        env:
+          PRE_COMMANDS: ${{ inputs.pre_commands }}
+        run: |
+          set -euo pipefail
+          # Intentionally eval'd: the input IS a shell snippet, supplied by the
+          # calling repo's own workflow file. It is no more privileged than the
+          # `run:` blocks in that same file.
+          eval "${PRE_COMMANDS}"
 
       - name: Restore .tox cache
         if: inputs.cache_tox
