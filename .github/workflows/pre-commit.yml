@@ -43,6 +43,25 @@ on:
         required: false
         type: string
         default: ''
+      all_files:
+        description: >-
+          true (default) runs `pre-commit run --all-files`. Set false to run
+          only the files a pull request changes, via --from-ref/--to-ref -- the
+          direct analogue of GitLab's
+          `--from-ref $CI_MERGE_REQUEST_DIFF_BASE_SHA --to-ref HEAD`.
+
+          This is not just a speed knob. A `pass_filenames: false` hook whose
+          `files:` pattern matches a tracked file fires on EVERY --all-files
+          run, because that file is always in the set. personal-website's
+          generate-resume hook is one: under --all-files it would rebuild a
+          Docker image and regenerate a resume on every pull request, rather
+          than only when the CV changes.
+
+          Ignored outside a pull_request event -- there is no base to diff
+          against, so a push or schedule falls back to --all-files.
+        required: false
+        type: boolean
+        default: true
       fetch_depth:
         description: >-
           Checkout depth. Defaults to 0 (full history), and the default is
@@ -98,4 +117,16 @@ jobs:
           pre-commit --version
 
       - name: Run hooks
-        run: pre-commit run --all-files --show-diff-on-failure
+        env:
+          ALL_FILES: ${{ inputs.all_files }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${ALL_FILES}" = "true" ] || [ -z "${BASE_SHA:-}" ]; then
+            pre-commit run --all-files --show-diff-on-failure
+          else
+            echo "Diff-scoped run: ${BASE_SHA}..${HEAD_SHA}"
+            pre-commit run --show-diff-on-failure \
+              --from-ref "${BASE_SHA}" --to-ref "${HEAD_SHA}"
+          fi
