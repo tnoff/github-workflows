@@ -90,7 +90,24 @@ bugs that GitLab's server-side lint won't flag until pipeline run time.
 
 ## Canonical remote
 
-The authoritative remote is GitLab:
-`gitlab.com/tnoff-projects/github-workflows`. The GitHub remote is a
-mirror used for GitHub Actions consumers. New GitLab CI `include:`
-references should use `project: 'tnoff-projects/github-workflows'`.
+The authoritative remote is **GitHub**: `github.com/tnoff/github-workflows`.
+Open pull requests there. This flipped on 2026-08-26 (see the docs corpus,
+`projects/github-canonical-migration.md`); before that GitLab was canonical
+and GitHub was a push mirror, so anything claiming otherwise predates the
+flip.
+
+The GitLab copy is **frozen**, not deleted — at `e410a65c` as of 2026-08-27,
+while GitHub has moved on. That distinction matters for the `gitlab/`
+templates:
+
+- Consumers still on GitLab CI pin 40-char SHAs in their `include:` blocks,
+  and every such SHA is at or before the freeze point, so they all still
+  resolve. Nothing broke.
+- But nothing new can reach them. A change to `gitlab/*.yml` merged here
+  lands on GitHub only, and a consumer's Renovate tracks `git-refs` against
+  the frozen GitLab copy, which reports "up to date" forever with no error.
+
+So `gitlab/*.yml` is effectively **frozen for publication**. Do not add new
+GitLab CI templates, and treat a needed change to an existing one as a
+signal to flip that consumer instead. Do not add new `include:` references
+pointing at `project: 'tnoff-projects/github-workflows'`.
