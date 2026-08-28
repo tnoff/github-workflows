@@ -16,12 +16,10 @@
   ],
   "packageRules": [
     {
-      "description": "Automerge the shared reusable-workflow pin. Every consumer SHA-pins tnoff/github-workflows in `uses:`, so one commit there fans out into one PR per repo -- 123 of the 400 dependency MRs merged fleet-wide in the 8 weeks to 2026-08-14 were exactly this, every one hand-merged. The change was already reviewed when it landed on main there; re-approving the same SHA per repo is duplicate review. The consumer's own checks still have to go green first. This replaces the git-refs rule in the GitLab preset, which matched https://gitlab.com/tnoff-projects/github-workflows through the custom regex manager -- on GitHub the built-in github-actions manager handles it, so both the datasource and the package name differ.",
-      "matchManagers": [
-        "github-actions"
-      ],
+      "description": "Automerge the shared reusable-workflow pin. Every consumer SHA-pins tnoff/github-workflows in `uses:`, so one commit there fans out into one PR per repo -- 123 of the 400 dependency MRs merged fleet-wide in the 8 weeks to 2026-08-14 were exactly this, every one hand-merged. The change was already reviewed when it landed on main there; re-approving the same SHA per repo is duplicate review. The consumer's own checks still have to go green first. Matched by package name across BOTH managers rather than by matchManagers: the built-in github-actions manager extracts these pins but never offers an update on them (see the custom manager below), so keying automerge to that manager gated nothing. Both spellings of the name are listed because the two managers name the same dependency differently.",
       "matchPackageNames": [
-        "tnoff/github-workflows"
+        "tnoff/github-workflows",
+        "https://github.com/tnoff/github-workflows"
       ],
       "automerge": true
     },
@@ -54,6 +52,19 @@
       "matchStrings": [
         "source\\s*=\\s*\"git::(?<depName>https?://[^?\"]+?/terraform-modules)\\.git(?://[^?\"]*)?\\?ref=(?<currentDigest>[a-f0-9]{40})\""
       ],
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "main"
+    },
+    {
+      "description": "Track tnoff/github-workflows reusable-workflow pins. The built-in github-actions manager only updates a SHA-pinned `uses:` when it carries a `# vX.Y.Z` comment telling it the current version; consumers pin this repo as a bare 40-char SHA, so it extracts the dep and then offers no update -- no error, no warning. Measured 2026-08-28 in one file on public-transit: `actions/checkout@<sha>  # v7.0.1` was bumped twice the same day while the four bare-SHA github-workflows pins beside it never moved, across two dispatched runs and a freshly cut tag. The note on the first packageRule below -- that the built-in manager handles this on GitHub, so the GitLab preset's git-refs manager was not needed -- was wrong, and this restores its equivalent. Same shape as the terraform-modules manager above.",
+      "customType": "regex",
+      "fileMatch": [
+        "^\\.github/workflows/[^/]+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "uses:\\s+tnoff/github-workflows/[^@\\s]+@(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "depNameTemplate": "https://github.com/tnoff/github-workflows",
       "datasourceTemplate": "git-refs",
       "currentValueTemplate": "main"
     }
