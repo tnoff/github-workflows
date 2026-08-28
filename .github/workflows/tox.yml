@@ -274,3 +274,40 @@ jobs:
           git fetch --no-tags --quiet origin "${COMPARE#origin/}"
           echo "Comparing against ${COMPARE}"
           diff-cover coverage.xml --compare-branch="${COMPARE}" --fail-under="${FAIL_UNDER}"
+
+  result:
+    name: Tox result
+    # The single check name that is safe to put in a branch ruleset.
+    #
+    # Two GitHub behaviours make the obvious choices wrong. Required status
+    # checks count `skipped` as success, and `diff-cover` needs the matrix, so
+    # a failing interpreter skips it -- gating on `Coverage on changed lines`
+    # therefore passes a red PR. Requiring the legs themselves (`tox (3.11)`)
+    # does bite, but the leg names come from a dynamic matrix, and a required
+    # check that never reports blocks merging indefinitely, so main breaks the
+    # day a repo drops an interpreter.
+    #
+    # This job always runs, so it always reports, and its name never changes.
+    if: always()
+    needs: [discover, tox, diff-cover]
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Summarise
+        run: |
+          echo "discover:   ${{ needs.discover.result }}"
+          echo "tox:        ${{ needs.tox.result }}"
+          echo "diff-cover: ${{ needs['diff-cover'].result }}"
+
+      - name: Fail if any tox job failed
+        # `skipped` is deliberately allowed: when allow_fork_prs is false and
+        # the PR is from a fork, discover skips and the rest cascade, which is
+        # the intended outcome rather than a failure.
+        if: >-
+          needs.discover.result == 'failure' || needs.discover.result == 'cancelled' ||
+          needs.tox.result == 'failure' || needs.tox.result == 'cancelled' ||
+          needs['diff-cover'].result == 'failure' || needs['diff-cover'].result == 'cancelled'
+        run: |
+          echo "::error::One or more tox jobs did not pass."
+          exit 1
