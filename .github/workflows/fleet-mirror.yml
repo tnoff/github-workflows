@@ -194,7 +194,17 @@ jobs:
             fi
 
             # Test 2 -- is there a GitHub counterpart at all?
-            gh_default=$(gh api "repos/${GITHUB_OWNER}/${path}" --jq '.default_branch' 2>/dev/null || echo "")
+            #
+            # `gh api` prints its error body to STDOUT, not stderr, so
+            # `2>/dev/null || echo ""` does not blank the value -- it appends an
+            # empty line to a JSON error object and the -z test passes it
+            # through. Branch on the exit status instead. Same shape as the
+            # curl --fail-with-body handling above; both tools answer failure
+            # on the channel you are reading for success.
+            if ! gh_default=$(gh api "repos/${GITHUB_OWNER}/${path}" \
+                 --jq '.default_branch' 2>/dev/null); then
+              gh_default=""
+            fi
             if [ -z "${gh_default}" ]; then
               printf '%-26s skip  (no GitHub repo)\n' "${path}" | tee -a "${summary}"
               continue
@@ -202,8 +212,10 @@ jobs:
 
             gl_branch="projects/${enc}/repository/branches/$(urlenc "${gl_default}")"
             gl_sha=$(gl_api "${gl_branch}" 2>/dev/null | jq -r '.commit.id' || echo "")
-            gh_sha=$(gh api "repos/${GITHUB_OWNER}/${path}/branches/${gh_default}" \
-              --jq '.commit.sha' 2>/dev/null || echo "")
+            if ! gh_sha=$(gh api "repos/${GITHUB_OWNER}/${path}/branches/${gh_default}" \
+                 --jq '.commit.sha' 2>/dev/null); then
+              gh_sha=""
+            fi
             # `jq -r` renders a missing field as the STRING "null", which is
             # not empty and would sail past a -z test into the compare step as
             # a literal sha of "null". Run 33449502797 reported 21 repos
@@ -226,8 +238,10 @@ jobs:
             #
             # One call, both answers. Asking twice would also open a window
             # where the tip moves between the two questions.
-            compare=$(gh api "repos/${GITHUB_OWNER}/${path}/compare/${gl_sha}...${gh_sha}" \
-              --jq '[.status, (.ahead_by | tostring)] | @tsv' 2>/dev/null || printf 'unknown\t?')
+            if ! compare=$(gh api "repos/${GITHUB_OWNER}/${path}/compare/${gl_sha}...${gh_sha}" \
+                 --jq '[.status, (.ahead_by | tostring)] | @tsv' 2>/dev/null); then
+              compare=$(printf 'unknown\t?')
+            fi
             status=${compare%%$'\t'*}
             ahead=${compare##*$'\t'}
 
