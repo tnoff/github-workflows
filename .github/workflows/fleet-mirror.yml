@@ -145,7 +145,16 @@ jobs:
           while :; do
             batch=$(gl_api "groups/${GITLAB_GROUP}/projects?per_page=100&page=${page}&archived=false&with_shared=false")
             count=$(printf '%s' "${batch}" | jq 'length')
-            printf '%s' "${batch}" | jq -r '.[] | [.path, .default_branch // ""] | @tsv' >> "${projects}"
+            # BOTH names, because they are not interchangeable. GitLab's API
+            # addresses a project by its FULL path (tnoff-projects/foo,
+            # url-encoded); the bare slug 404s. GitHub's repo name and the
+            # GitLab clone URL want the bare slug. Conflating them is what
+            # broke run 33449502797 -- every per-project read 404'd while the
+            # group listing succeeded, which reads like an auth failure and is
+            # not one.
+            printf '%s' "${batch}" \
+              | jq -r '.[] | [.path, .path_with_namespace, .default_branch // ""] | @tsv' \
+              >> "${projects}"
             [ "${count}" -eq 100 ] || break
             page=$(( page + 1 ))
           done
@@ -153,13 +162,13 @@ jobs:
           echo "fleet-mirror: $(wc -l < "${projects}") GitLab projects, dry_run=${DRY_RUN}"
           echo
 
-          while IFS="$(printf '\t')" read -r path gl_default; do
+          while IFS="$(printf '\t')" read -r path full_path gl_default; do
             [ -n "${path}" ] || continue
             if [ -n "${ONLY}" ] && [ "${path}" != "${ONLY}" ]; then
               continue
             fi
 
-            enc=$(urlenc "${path}")
+            enc=$(urlenc "${full_path}")
 
             if [ -z "${gl_default}" ]; then
               printf '%-26s skip  (GitLab repo is empty)\n' "${path}" | tee -a "${summary}"
@@ -167,7 +176,17 @@ jobs:
             fi
 
             # Test 1 -- is GitLab still the writer here?
-            mirrors=$(gl_api "projects/${enc}/remote_mirrors" || echo '[]')
+            #
+            # An unreadable answer is NOT treated as "no mirrors". We cannot
+            # prove GitLab is not the writer, so we skip rather than guess --
+            # guessing here means two writers fighting over one branch. This
+            # also means a systemic API failure degrades to "mirrored nothing"
+            # instead of "mirrored everything wrongly".
+            if ! mirrors=$(gl_api "projects/${enc}/remote_mirrors" 2>/dev/null); then
+              printf '%-26s skip  (cannot read remote_mirrors; refusing to guess)\n' \
+                "${path}" | tee -a "${summary}"
+              continue
+            fi
             if [ "$(printf '%s' "${mirrors}" | jq '[.[] | select(.enabled)] | length')" != "0" ]; then
               printf '%-26s skip  (GitLab push-mirrors to GitHub; it is canonical)\n' \
                 "${path}" | tee -a "${summary}"
@@ -185,6 +204,12 @@ jobs:
             gl_sha=$(gl_api "${gl_branch}" 2>/dev/null | jq -r '.commit.id' || echo "")
             gh_sha=$(gh api "repos/${GITHUB_OWNER}/${path}/branches/${gh_default}" \
               --jq '.commit.sha' 2>/dev/null || echo "")
+            # `jq -r` renders a missing field as the STRING "null", which is
+            # not empty and would sail past a -z test into the compare step as
+            # a literal sha of "null". Run 33449502797 reported 21 repos
+            # DIVERGED that way, none of which were.
+            [ "${gl_sha}" = "null" ] && gl_sha=""
+            [ "${gh_sha}" = "null" ] && gh_sha=""
             if [ -z "${gl_sha}" ] || [ -z "${gh_sha}" ]; then
               printf '%-26s skip  (could not read both tips)\n' "${path}" | tee -a "${summary}"
               continue
