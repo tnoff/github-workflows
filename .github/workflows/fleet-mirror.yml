@@ -1,0 +1,270 @@
+name: Fleet mirror
+
+# Push GitHub -> GitLab for every flipped repo, so the GitLab copies stay
+# usable as break-glass instead of freezing at their flip commit.
+#
+# WHY THIS EXISTS
+#
+# Before the migration, GitLab push-mirrored to GitHub on every commit. Flipping
+# a repo drops `mirror_url`, and nothing replaced it in the other direction --
+# GitLab pull mirroring is a Premium feature and the `tnoff-projects` namespace
+# is Free, so a push from Actions is the only direction available. The result
+# was silent: docs/projects/github-canonical-migration.md promised GitLab as
+# break-glass while the copies drifted. Measured 2026-08-30, before this ran:
+# 17 of the 19 flipped repos with a GitLab copy were behind, 130 commits in
+# total, the worst (discord-bot) by 22.
+#
+# WHY IT LIVES HERE and is not a `workflow_call` template
+#
+# It acts on the fleet, not on this repo, so it is deliberately not `self-*`.
+# It also runs in exactly one place and takes no per-repo configuration, so
+# making it reusable would add a caller with nothing to say. It lives in this
+# repo because this is where fleet CI infrastructure lives and because the repo
+# is public -- an hourly cron in `docs`, the natural inventory owner, would bill
+# ~720 runs/month against that repo's ~120-minute budget.
+#
+# NO REPO LIST. The set of repos to mirror is derived, not configured. A
+# GitLab project is mirrored back iff it has no enabled remote mirror of its
+# own, has a GitHub counterpart, and its default branch is a strict ancestor of
+# GitHub's. Those three tests encode "GitHub is canonical here" without anyone
+# maintaining a list that can go stale -- and each one fails CLOSED:
+#
+#   - enabled remote mirror  -> GitLab is the writer (ci-base-images still is).
+#                               Two writers would fight; skip.
+#   - no GitHub counterpart  -> terraform/terraform-admin/docker-apps have no
+#                               GitHub repo at all; skip.
+#   - not a strict ancestor  -> GitLab holds commits GitHub does not. That is
+#                               either a still-GitLab-canonical repo or real
+#                               divergence, and both need a human. FAIL, loudly.
+#
+# NEVER FORCE-PUSHES. The old mirror ran with keep_divergent_refs = false and
+# clobbered whatever GitHub had; this must not inherit that. A non-fast-forward
+# is the signal that someone wrote to GitLab, which is exactly the thing worth
+# hearing about -- so it is reported and fails the run, never resolved. GitLab's
+# own protected-branch config (allow_force_push = false on `main`) is a second
+# guard behind this one.
+#
+# PUSHES WITH `ci.skip`, WHICH IS LOAD-BEARING. The flipped repos still carry a
+# live `.gitlab-ci.yml` pinned to `self-hosted` runners. Without `ci.skip` every
+# mirror push would fire a full pipeline on the very runners this migration is
+# retiring, cut duplicate tags and releases, and -- worst -- run
+# `assemble-changelog`, which pushes a CHANGELOG commit BACK to GitLab `main`.
+# That single commit would diverge GitLab from GitHub, and since force-push is
+# blocked, every later mirror push to that repo would be rejected forever.
+#
+# Note the shape of that last one rather than just its severity.
+# `assemble-changelog` no-ops when no `changelog.d/*.md` fragment is pending,
+# and as of 2026-08-30 none is, anywhere. So an unguarded mirror would not fail
+# on day one -- it would work for weeks and then permanently break whichever
+# repo happened to have a fragment outstanding at the wrong moment. Intermittent
+# is worse than certain here, because certain gets caught in testing.
+#
+# `ci.skip` is what makes this a mirror and not a trigger.
+#
+# Break-glass itself is unaffected: it is a human flipping the pipeline schedule
+# and CI variable back on, not a push-triggered pipeline.
+
+on:
+  schedule:
+    # Hourly. The lag this leaves is the lag of a GitHub outage's blast radius:
+    # the fleet lands ~26 commits a day, so a daily sweep would lose a working
+    # day's worth and an hourly one loses about one commit.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report what would be pushed without pushing'
+        required: false
+        type: boolean
+        default: true
+      only:
+        description: 'Optional single repo path to act on (e.g. dappertable)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two sweeps pushing the same refs is harmless but the second one's report is
+  # noise. Never cancel a run mid-push.
+  group: fleet-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror to GitLab
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Mirror
+        env:
+          # Reads GitHub. Needs to see private repos -- `docs` is private, and
+          # the default GITHUB_TOKEN is scoped to this repo alone.
+          GH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
+          # Pushes to GitLab as tnoff-robot, a group Maintainer, which is what
+          # protected `main` requires (push_access_level = maintainer).
+          GITLAB_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
+          GITLAB_GROUP: tnoff-projects
+          GITHUB_OWNER: tnoff
+          # A scheduled run is the real thing; a hand-dispatched one defaults to
+          # reporting only, so "just show me" is the safe default to type.
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
+          ONLY: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GITLAB_TOKEN}" ]; then
+            echo "::error::GITLAB_MIRROR_TOKEN is unset. terraform/infra/repos.tf writes it (module.github_workflows)."
+            exit 1
+          fi
+
+          gl_api() {
+            # --fail-with-body so a 4xx is an error AND the body is still
+            # readable; without it curl exits 0 on 403 and the caller parses an
+            # error object as data.
+            # `Authorization: Bearer` rather than `PRIVATE-TOKEN` -- GitLab
+            # accepts a PAT either way, but only Bearer also accepts an OAuth
+            # token, which is what a local `glab` login holds. That means this
+            # script can be run verbatim against the live APIs from a laptop
+            # before it is trusted with a push.
+            curl --silent --show-error --fail-with-body \
+              --header "Authorization: Bearer ${GITLAB_TOKEN}" \
+              "https://gitlab.com/api/v4/$1"
+          }
+
+          urlenc() { printf '%s' "$1" | sed 's|/|%2F|g'; }
+
+          summary=$(mktemp)
+          diverged=$(mktemp)
+
+          # Archived projects are excluded: cl-calculator's GitHub side is
+          # archived and cannot be written to anyway.
+          projects=$(mktemp)
+          page=1
+          while :; do
+            batch=$(gl_api "groups/${GITLAB_GROUP}/projects?per_page=100&page=${page}&archived=false&with_shared=false")
+            count=$(printf '%s' "${batch}" | jq 'length')
+            printf '%s' "${batch}" | jq -r '.[] | [.path, .default_branch // ""] | @tsv' >> "${projects}"
+            [ "${count}" -eq 100 ] || break
+            page=$(( page + 1 ))
+          done
+
+          echo "fleet-mirror: $(wc -l < "${projects}") GitLab projects, dry_run=${DRY_RUN}"
+          echo
+
+          while IFS="$(printf '\t')" read -r path gl_default; do
+            [ -n "${path}" ] || continue
+            if [ -n "${ONLY}" ] && [ "${path}" != "${ONLY}" ]; then
+              continue
+            fi
+
+            enc=$(urlenc "${path}")
+
+            if [ -z "${gl_default}" ]; then
+              printf '%-26s skip  (GitLab repo is empty)\n' "${path}" | tee -a "${summary}"
+              continue
+            fi
+
+            # Test 1 -- is GitLab still the writer here?
+            mirrors=$(gl_api "projects/${enc}/remote_mirrors" || echo '[]')
+            if [ "$(printf '%s' "${mirrors}" | jq '[.[] | select(.enabled)] | length')" != "0" ]; then
+              printf '%-26s skip  (GitLab push-mirrors to GitHub; it is canonical)\n' \
+                "${path}" | tee -a "${summary}"
+              continue
+            fi
+
+            # Test 2 -- is there a GitHub counterpart at all?
+            gh_default=$(gh api "repos/${GITHUB_OWNER}/${path}" --jq '.default_branch' 2>/dev/null || echo "")
+            if [ -z "${gh_default}" ]; then
+              printf '%-26s skip  (no GitHub repo)\n' "${path}" | tee -a "${summary}"
+              continue
+            fi
+
+            gl_branch="projects/${enc}/repository/branches/$(urlenc "${gl_default}")"
+            gl_sha=$(gl_api "${gl_branch}" 2>/dev/null | jq -r '.commit.id' || echo "")
+            gh_sha=$(gh api "repos/${GITHUB_OWNER}/${path}/branches/${gh_default}" \
+              --jq '.commit.sha' 2>/dev/null || echo "")
+            if [ -z "${gl_sha}" ] || [ -z "${gh_sha}" ]; then
+              printf '%-26s skip  (could not read both tips)\n' "${path}" | tee -a "${summary}"
+              continue
+            fi
+            if [ "${gl_sha}" = "${gh_sha}" ]; then
+              printf '%-26s ok    (in sync at %s)\n' "${path}" "${gl_sha:0:8}" | tee -a "${summary}"
+              continue
+            fi
+
+            # Test 3 -- fast-forward only. `ahead` means GitHub is ahead of the
+            # GitLab tip, i.e. the GitLab tip is a strict ancestor. Anything
+            # else (behind, diverged, or a 404 because GitHub has never heard of
+            # the GitLab tip) is a human's problem, not a force-push.
+            #
+            # One call, both answers. Asking twice would also open a window
+            # where the tip moves between the two questions.
+            compare=$(gh api "repos/${GITHUB_OWNER}/${path}/compare/${gl_sha}...${gh_sha}" \
+              --jq '[.status, (.ahead_by | tostring)] | @tsv' 2>/dev/null || printf 'unknown\t?')
+            status=${compare%%$'\t'*}
+            ahead=${compare##*$'\t'}
+
+            if [ "${status}" != "ahead" ]; then
+              printf '%-26s DIVERGED (compare=%s gitlab=%s github=%s)\n' \
+                "${path}" "${status}" "${gl_sha:0:8}" "${gh_sha:0:8}" | tee -a "${summary}"
+              echo "${path}" >> "${diverged}"
+              continue
+            fi
+
+            if [ "${DRY_RUN}" = "true" ]; then
+              printf '%-26s would push %s commits (%s -> %s)\n' \
+                "${path}" "${ahead}" "${gl_sha:0:8}" "${gh_sha:0:8}" | tee -a "${summary}"
+              continue
+            fi
+
+            work=$(mktemp -d)
+            # --bare so refs land under refs/heads/* directly and the push
+            # refspecs mean what they say. Deliberately NOT `git push --mirror`,
+            # which would DELETE GitLab refs absent from GitHub.
+            git clone --quiet --bare \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_OWNER}/${path}.git" \
+              "${work}/repo"
+
+            # No `+` on either refspec and no --force: a non-fast-forward branch
+            # or a moved tag is rejected by git rather than resolved here.
+            # -o ci.skip: see the header. Without it this is a trigger, not a
+            # mirror.
+            if git -C "${work}/repo" push --porcelain -o ci.skip \
+                 "https://tnoff-robot:${GITLAB_TOKEN}@gitlab.com/${GITLAB_GROUP}/${path}.git" \
+                 "refs/heads/${gh_default}:refs/heads/${gl_default}" \
+                 "refs/tags/*:refs/tags/*" > "${work}/push.log" 2>&1; then
+              printf '%-26s pushed %s commits (%s -> %s)\n' \
+                "${path}" "${ahead}" "${gl_sha:0:8}" "${gh_sha:0:8}" | tee -a "${summary}"
+            else
+              printf '%-26s PUSH FAILED (%s -> %s)\n' \
+                "${path}" "${gl_sha:0:8}" "${gh_sha:0:8}" | tee -a "${summary}"
+              # The log can name a rejected ref; it never contains the token,
+              # which Actions masks regardless.
+              sed 's/^/    /' "${work}/push.log" || true
+              echo "${path}" >> "${diverged}"
+            fi
+            rm -rf "${work}"
+          done < "${projects}"
+
+          {
+            echo '## Fleet mirror'
+            echo
+            echo "dry_run: \`${DRY_RUN}\`"
+            echo
+            echo '```'
+            cat "${summary}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ -s "${diverged}" ]; then
+            echo
+            names=$(tr '\n' ' ' < "${diverged}")
+            echo "::error::GitLab holds commits GitHub does not, or a push was rejected: ${names}"
+            echo "::error::Resolve by hand. This job will not force-push."
+            exit 1
+          fi
+
+          echo
+          echo "fleet-mirror: done"
