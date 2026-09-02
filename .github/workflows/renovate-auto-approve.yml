@@ -1,11 +1,26 @@
 name: Renovate auto-approve
 
-# Reusable workflow: approve (and optionally auto-merge) Renovate's own PRs.
+# Reusable workflow: enable auto-merge on Renovate's own PRs, and -- only if
+# asked -- approve them.
 #
-# Exists because CODEOWNERS + a branch ruleset with require_code_owner_review
-# is otherwise unsatisfiable for a bot: GitHub does not let a PR author approve
-# their own PR, so a Renovate PR needs an approval from a *different* code
-# owner before automerge can proceed. This supplies it.
+# APPROVAL IS OFF BY DEFAULT (2026-09-02). It was on because CODEOWNERS plus a
+# ruleset with require_code_owner_review looked unsatisfiable for a bot: GitHub
+# does not let a PR author approve their own PR. Measured, that gate never
+# bites. require_code_owner_review is a sub-condition of requiring approvals,
+# and the shared github/repo module leaves required_approving_review_count at
+# the provider default of 0 -- with no approval required, there is none to
+# qualify. GitHub agrees: discord-bot#904 reports reviewDecision: null.
+#
+# So the review satisfied no rule. What it did do was spend a *person's* PAT on
+# every bot PR, and every one of the 12 consumers had widened branch_pattern
+# from the `^renovate/dev-` default to `^renovate/`, so that signature landed on
+# majors too. Auto-merge is unaffected and still runs -- the required status
+# checks were always the real gate.
+#
+# Turn approval back on (approve: true) only when a ruleset actually requires an
+# approval, and prefer an identity that is not a human's. Note that a GitHub App
+# cannot be listed in CODEOWNERS, so an App token satisfies a plain count
+# requirement but not require_code_owner_review.
 #
 # Deliberately NOT a port of dependabot-auto-approve.yml. That workflow is
 # built on dependabot/fetch-metadata, which reports the semver level of an
@@ -21,13 +36,15 @@ name: Renovate auto-approve
 #    Handing it the same identity Renovate authenticates as produces a
 #    self-approval, which GitHub refuses. The default GITHUB_TOKEN is no good
 #    either -- it approves as github-actions[bot], which is not in CODEOWNERS.
+#    Applies only when approve is true; the token is otherwise unread.
 #
 # 2. The caller must trigger on `synchronize`, not just `opened`. Rulesets set
 #    dismiss_stale_reviews_on_push, and bump-version pushes a version commit to
 #    Renovate branches *after* the PR opens -- which dismisses the approval this
 #    workflow just gave. Re-firing on synchronize is what makes it converge.
 #    The default `on: pull_request` types already include synchronize; do not
-#    narrow them to [opened].
+#    narrow them to [opened]. Still required with approval off: re-firing is
+#    also what re-enables auto-merge if a push ever clears it.
 #
 # Usage in a consumer repo:
 #
@@ -48,6 +65,18 @@ on:
         required: false
         type: string
         default: 'tnoff-robot'
+      approve:
+        description: >-
+          Whether to actually submit the approving review. Defaults to FALSE:
+          with required_approving_review_count = 0 on every ruleset in the
+          fleet, the review satisfies no rule -- GitHub reports
+          reviewDecision: null, meaning none is required for the PR to merge --
+          so it only spends a person's PAT on every bot PR. Set true only once
+          a ruleset actually requires an approval, and only with a token that
+          does not belong to a human.
+        required: false
+        type: boolean
+        default: false
       branch_pattern:
         description: >-
           ERE matched against the PR head branch. Defaults to Renovate's
@@ -76,7 +105,10 @@ on:
       approval_token:
         description: >-
           PAT of a code owner other than the PR author. See note 1 above.
-        required: true
+          Consulted only when `approve` is true. Auto-merge falls back to the
+          job's GITHUB_TOKEN, so a caller that does not approve need not
+          supply this at all.
+        required: false
     outputs:
       approved:
         description: 'Whether the PR was approved (true/false)'
@@ -93,23 +125,38 @@ jobs:
     outputs:
       approved: ${{ steps.approve.outputs.approved }}
     steps:
+      # The branch pattern gates BOTH the approval and auto-merge, so it is
+      # evaluated once here rather than duplicated into each step below.
+      - name: Check branch eligibility
+        id: gate
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BRANCH_PATTERN: ${{ inputs.branch_pattern }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "${HEAD_REF}" | grep -Eq "${BRANCH_PATTERN}"; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Branch '${HEAD_REF}' does not match '${BRANCH_PATTERN}' -- leaving for a human."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Off by default -- see the `approve` input for why.
       - name: Approve
         id: approve
+        if: inputs.approve && steps.gate.outputs.eligible == 'true'
         env:
           GH_TOKEN: ${{ secrets.approval_token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           BRANCH_PATTERN: ${{ inputs.branch_pattern }}
-          AUTO_MERGE: ${{ inputs.auto_merge }}
-          MERGE_METHOD: ${{ inputs.merge_method }}
         run: |
           set -euo pipefail
 
-          if ! printf '%s' "${HEAD_REF}" | grep -Eq "${BRANCH_PATTERN}"; then
-            echo "Branch '${HEAD_REF}' does not match '${BRANCH_PATTERN}' -- leaving for a human."
-            echo "approved=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::approve is true but no approval_token was supplied."
+            exit 1
           fi
 
           # Refuse to self-approve rather than letting the API reject it with a
@@ -128,7 +175,21 @@ jobs:
             --body "Auto-approved: ${AUTHOR} PR on ${HEAD_REF}, matching ${BRANCH_PATTERN}."
           echo "approved=true" >> "$GITHUB_OUTPUT"
 
-          if [ "${AUTO_MERGE}" = "true" ]; then
-            echo "Enabling auto-merge (${MERGE_METHOD})"
-            gh pr merge "${PR_URL}" --auto "--${MERGE_METHOD}"
-          fi
+      # Deliberately NOT gated on the approval having happened. Enabling
+      # auto-merge is not a review: it asks GitHub to merge once the required
+      # checks pass, and those checks are the real gate. Keeping the two
+      # independent is what lets the approval be switched off without stopping
+      # the fleet from merging.
+      #
+      # Falls back to GITHUB_TOKEN so a caller that no longer approves does not
+      # have to keep a PAT around solely to press this button.
+      - name: Enable auto-merge
+        if: inputs.auto_merge && steps.gate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.approval_token || github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_METHOD: ${{ inputs.merge_method }}
+        run: |
+          set -euo pipefail
+          echo "Enabling auto-merge (${MERGE_METHOD}) on ${PR_URL}"
+          gh pr merge "${PR_URL}" --auto "--${MERGE_METHOD}"
