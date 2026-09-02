@@ -29,3 +29,33 @@ jobs:
   secrets:
     name: Scan for secrets
     uses: ./.github/workflows/trufflehog.yml
+
+  result:
+    name: CI result
+    # The stable name for the branch ruleset to require.
+    #
+    # Requiring `pre-commit / pre-commit` and `Scan for secrets / Scan for
+    # secrets` by name does not gate reliably: GitHub scores a `skipped`
+    # required check as SUCCESS, and trufflehog.yml carries an allow_fork_prs
+    # gate that can skip its only job. This repo is the one that defines that
+    # gate for everyone else, so it should not be the one relying on it.
+    #
+    # This job always runs and its name never changes.
+    if: always()
+    needs: [pre-commit, secrets]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Summarise
+        run: |
+          echo "pre-commit: ${{ needs['pre-commit'].result }}"
+          echo "secrets:    ${{ needs.secrets.result }}"
+
+      - name: Fail if any job failed
+        if: >-
+          needs['pre-commit'].result == 'failure' || needs['pre-commit'].result == 'cancelled' ||
+          needs.secrets.result == 'failure' || needs.secrets.result == 'cancelled'
+        run: |
+          echo "::error::One or more CI jobs did not pass."
+          exit 1
