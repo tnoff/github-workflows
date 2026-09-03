@@ -22,4 +22,5 @@ jobs:
       contents: write
     uses: ./.github/workflows/tag.yml
     secrets:
-      push_token: ${{ secrets.GIT_PUSH_TOKEN }}
+      app_id: ${{ secrets.CI_APP_ID }}
+      app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}

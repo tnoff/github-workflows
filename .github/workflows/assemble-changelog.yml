@@ -17,11 +17,13 @@ name: Assemble changelog
 # ---------------------------------------------------------------------------
 # Two requirements follow, and both fail confusingly if missed:
 #
-#   1. push_token must belong to an identity the ruleset lets through. The
-#      fleet's rulesets bypass the repository-admin role only, so an admin's
-#      PAT works and a write-scoped bot token is rejected by the push, not by
-#      the API call before it.
-#   2. push_token must not be the default GITHUB_TOKEN. The whole
+#   1. The token must belong to an identity the ruleset lets through. That
+#      used to mean the repository-admin role -- a human's admin PAT, holding
+#      a bypass over every rule, written to 16 repos for one push per release.
+#      It is now the tnoff-ci App, named as an `Integration` bypass actor on
+#      every ruleset. A write-scoped bot account still does NOT work: its push
+#      is rejected, not the API call before it.
+#   2. The token must not be the default GITHUB_TOKEN. The whole
 #      fragment-gating design depends on this push triggering a FOLLOW-UP run:
 #      the tag job defers while fragments are pending, the fold push clears
 #      them, and the follow-up run tags against the assembled changelog. A push
@@ -62,8 +64,11 @@ on:
         type: string
         default: '["ubuntu-24.04"]'
     secrets:
-      push_token:
-        description: 'PAT used to push the fold commit. See the note above.'
+      app_id:
+        description: 'App ID of the tnoff-ci GitHub App (CI_APP_ID).'
+        required: true
+      app_private_key:
+        description: 'Private key PEM of the tnoff-ci GitHub App (CI_APP_PRIVATE_KEY).'
         required: true
     outputs:
       assembled:
@@ -79,11 +84,27 @@ jobs:
     outputs:
       assembled: ${{ steps.assemble.outputs.assembled }}
     steps:
+      # Short-lived installation token for the tnoff-ci App, minted per run.
+      #
+      # Replaces the human admin PAT this used to carry. The fleet's rulesets
+      # name the App as a bypass actor (actor_type "Integration", confirmed by
+      # reading the ruleset back on dappertable), so it can push to a protected
+      # `main` -- and unlike GITHUB_TOKEN its pushes DO trigger the follow-up
+      # run the release depends on. The token expires in an hour and can only
+      # write contents and workflows: it cannot change settings, edit rulesets,
+      # approve a review, or merge a PR.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0
-          token: ${{ secrets.push_token }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Assemble
         id: assemble

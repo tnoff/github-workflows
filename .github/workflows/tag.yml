@@ -11,7 +11,7 @@ name: Tag
 #     cheapest check that does not depend on local tag state.
 #
 # ---------------------------------------------------------------------------
-# push_token, and why the default GITHUB_TOKEN will not do
+# the App token, and why the default GITHUB_TOKEN will not do
 # ---------------------------------------------------------------------------
 # A tag pushed with the default GITHUB_TOKEN triggers no downstream workflow
 # run. More importantly for repos with a branch ruleset: the token must belong
@@ -58,8 +58,11 @@ on:
         type: string
         default: '["ubuntu-24.04"]'
     secrets:
-      push_token:
-        description: 'PAT used to push the tag. See the note above.'
+      app_id:
+        description: 'App ID of the tnoff-ci GitHub App (CI_APP_ID).'
+        required: true
+      app_private_key:
+        description: 'Private key PEM of the tnoff-ci GitHub App (CI_APP_PRIVATE_KEY).'
         required: true
     outputs:
       version:
@@ -83,11 +86,27 @@ jobs:
       tag_created: ${{ steps.tag.outputs.tag_created }}
       tag_exists: ${{ steps.tag.outputs.tag_exists }}
     steps:
+      # Short-lived installation token for the tnoff-ci App, minted per run.
+      #
+      # Replaces the human admin PAT this used to carry. The fleet's rulesets
+      # name the App as a bypass actor (actor_type "Integration", confirmed by
+      # reading the ruleset back on dappertable), so it can push to a protected
+      # `main` -- and unlike GITHUB_TOKEN its pushes DO trigger the follow-up
+      # run the release depends on. The token expires in an hour and can only
+      # write contents and workflows: it cannot change settings, edit rulesets,
+      # approve a review, or merge a PR.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0
-          token: ${{ secrets.push_token }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Tag
         id: tag
