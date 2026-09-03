@@ -19,6 +19,15 @@ name: Renovate
 #     *is* github, the platform token covers release notes and the whole failure
 #     mode disappears. Do not reintroduce it.
 #
+#     CAVEAT, unverified: that reasoning was written when the platform token
+#     was a PAT. It is now a GitHub App installation token, which is scoped to
+#     the installation's repositories -- and changelogs are fetched from repos
+#     OUTSIDE it (actions/checkout, pytest, and so on). If release notes stop
+#     rendering in PR bodies after this change, that is the cause, and
+#     GITHUB_COM_TOKEN comes back for changelogs only. Check a PR body before
+#     rolling this past the first repo: the failure is cosmetic and silent, so
+#     nothing else will report it.
+#
 # Usage in a consumer repo:
 #
 #   on:
@@ -30,7 +39,8 @@ name: Renovate
 #     renovate:
 #       uses: tnoff/github-workflows/.github/workflows/renovate.yml@<sha>
 #       secrets:
-#         renovate_token: ${{ secrets.RENOVATE_TOKEN }}
+#         app_id: ${{ secrets.CI_APP_ID }}
+#         app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 #
 on:
   workflow_call:
@@ -65,12 +75,16 @@ on:
         type: number
         default: 30
     secrets:
-      renovate_token:
+      app_id:
+        description: 'App ID of the tnoff-ci GitHub App (CI_APP_ID).'
+        required: true
+      app_private_key:
         description: >-
-          GitHub token Renovate authenticates and opens PRs with. Needs repo +
-          workflow scope -- workflow scope is required or Renovate cannot open a
-          PR that touches .github/workflows, which is exactly what the
-          github-actions manager does.
+          Private key PEM of the tnoff-ci GitHub App (CI_APP_PRIVATE_KEY).
+          Renovate authenticates as the App rather than as tnoff-robot, which
+          is what lets that account hold no write access on GitHub at all --
+          an App's permissions come from its installation, not from
+          collaborator status.
         required: true
 
 jobs:
@@ -81,13 +95,28 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Renovate authenticates as the tnoff-ci App, not as tnoff-robot. An
+      # App's access comes from its installation rather than from collaborator
+      # status, so the bot account needs no write permission on GitHub at all.
+      #
+      # gitAuthor is pinned in renovate/default-github.json, which is what
+      # makes this swap invisible: with it unset Renovate derives its commit
+      # author from the authenticated account, and changing the token would
+      # re-author its commits and orphan every branch it already owns.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Renovate
         uses: renovatebot/github-action@5402b206248e5a8c8427a15102702eb9c1793efc  # v46.2.4
         with:
-          token: ${{ secrets.renovate_token }}
+          token: ${{ steps.app-token.outputs.token }}
         env:
           RENOVATE_PLATFORM: github
           RENOVATE_REPOSITORIES: ${{ github.repository }}
