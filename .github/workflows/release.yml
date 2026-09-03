@@ -15,7 +15,7 @@ name: Release
 #     tag:
 #       uses: tnoff/github-workflows/.github/workflows/tag.yml@<sha>
 #       secrets:
-#         app_id: ${{ secrets.CI_APP_ID }}
+#         app_client_id: ${{ secrets.CI_APP_CLIENT_ID }}
 #         app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 #     release:
 #       needs: tag
