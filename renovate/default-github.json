@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Fleet defaults for repos that have flipped to GitHub-canonical. Parallel to renovate/default.json, which stays in place for repos still on GitLab CI -- both have to coexist until the migration finishes. Anything platform-neutral is deliberately identical between the two; every difference below is a GitLab coupling that does not survive the move.\n\nTwo things from the GitLab preset are absent rather than changed, and neither absence is visible in the rules below. hostRules capping github.com to concurrentRequestLimit 2 is gone: it existed only to stop the terraform manager's provider fan-out (oracle/oci ships 13 platform zips at ~65MiB each) OOMKilling a 1500Mi build container on the self-hosted runner. A hosted runner has 16GB, so the cap now only costs wall-clock. The packageRule disabling the gitlabci-include manager is gone because that manager is never enabled here.",
+  "description": "Fleet defaults for repos that have flipped to GitHub-canonical. Parallel to renovate/default.json, which stays in place for repos still on GitLab CI -- both have to coexist until the migration finishes. Anything platform-neutral is deliberately identical between the two; every difference below is a GitLab coupling that does not survive the move.\n\nTwo things from the GitLab preset are absent rather than changed, and neither absence is visible in the rules below. hostRules capping github.com to concurrentRequestLimit 2 is gone: it existed only to stop the terraform manager's provider fan-out (oracle/oci ships 13 platform zips at ~65MiB each) OOMKilling a 1500Mi build container on the self-hosted runner. A hosted runner has 16GB, so the cap now only costs wall-clock. The packageRule disabling the gitlabci-include manager is gone because that manager is never enabled here.\n\ngitAuthor is pinned rather than left to Renovate's default, and gitIgnoredAuthors lists every identity that legitimately commits to a Renovate branch. Both exist because Renovate refuses to rebase a branch carrying a commit from an author it does not recognise -- the branch is treated as human-edited and wedges at need_rebase, with the recompute that would fix it gated off behind the same guard.\n\nTwo identities do that here. bump-version commits as github-actions[bot] (hardcoded git config user.email). And since allow_update_branch was turned on fleet-wide, GitHub itself writes 'Merge branch main into renovate/...' commits attributed to the REPOSITORY OWNER, not to the account that enabled auto-merge -- so me@tyler-north.com lands on Renovate branches without anyone typing anything. That second one was missing and was a latent wedge on every open Renovate PR.\n\nPinning gitAuthor to Renovate's own default value is deliberately a no-op today. It matters when the token changes: Renovate derives its author from the authenticated account when gitAuthor is unset, so swapping to a GitHub App token would silently re-author its commits and orphan every branch it already owns.",
   "extends": [
     "config:recommended"
   ],
@@ -11,8 +11,10 @@
   "rebaseWhen": "behind-base-branch",
   "prHourlyLimit": 0,
   "prConcurrentLimit": 0,
+  "gitAuthor": "Renovate <renovate@whitesourcesoftware.com>",
   "gitIgnoredAuthors": [
-    "github-actions[bot]@users.noreply.github.com"
+    "github-actions[bot]@users.noreply.github.com",
+    "me@tyler-north.com"
   ],
   "packageRules": [
     {
