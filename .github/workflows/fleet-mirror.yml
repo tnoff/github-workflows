@@ -97,11 +97,30 @@ jobs:
     name: Mirror to GitLab
     runs-on: ubuntu-24.04
     steps:
+      # Short-lived installation token for the tnoff-ci App, minted per run.
+      #
+      # Replaces the human admin PAT this used to carry. The fleet's rulesets
+      # name the App as a bypass actor (actor_type "Integration", confirmed by
+      # reading the ruleset back on dappertable), so it can push to a protected
+      # `main` -- and unlike GITHUB_TOKEN its pushes DO trigger the follow-up
+      # run the release depends on. The token expires in an hour and can only
+      # write contents and workflows: it cannot change settings, edit rulesets,
+      # approve a review, or merge a PR.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          # Installation-wide, not just this repo. The sweep reads every
+          # repo in the fleet including private `docs`, and the action scopes
+          # the token to the current repository unless an owner is given.
+          owner: ${{ github.repository_owner }}
       - name: Mirror
         env:
           # Reads GitHub. Needs to see private repos -- `docs` is private, and
           # the default GITHUB_TOKEN is scoped to this repo alone.
-          GH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           # Pushes to GitLab as tnoff-robot, a group Maintainer, which is what
           # protected `main` requires (push_access_level = maintainer).
           GITLAB_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}

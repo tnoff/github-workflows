@@ -14,7 +14,9 @@ name: Release
 #   jobs:
 #     tag:
 #       uses: tnoff/github-workflows/.github/workflows/tag.yml@<sha>
-#       secrets: {push_token: ${{ secrets.GIT_PUSH_TOKEN }}}
+#       secrets:
+#         app_id: ${{ secrets.CI_APP_ID }}
+#         app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 #     release:
 #       needs: tag
 #       uses: tnoff/github-workflows/.github/workflows/release.yml@<sha>

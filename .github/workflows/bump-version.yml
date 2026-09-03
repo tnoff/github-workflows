@@ -21,7 +21,7 @@ name: Bump version file on PR
 # ---------------------------------------------------------------------------
 # Push token
 # ---------------------------------------------------------------------------
-# Set git_push_token. A push made with the default GITHUB_TOKEN does NOT
+# Set the App secrets. A push made with the default GITHUB_TOKEN does NOT
 # trigger further workflow runs -- GitHub's infinite-loop guard -- so the PR
 # head advances past the last checked commit and required checks never report
 # on the commit that is actually merged. This is the same trap the GitLab
@@ -37,7 +37,8 @@ name: Bump version file on PR
 #         version_file: package.json
 #         version_file_type: json
 #       secrets:
-#         git_push_token: ${{ secrets.GIT_PUSH_TOKEN }}
+#         app_id: ${{ secrets.CI_APP_ID }}
+#         app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 #
 on:
   workflow_call:
@@ -97,11 +98,12 @@ on:
         type: boolean
         default: false
     secrets:
-      git_push_token:
-        description: >-
-          Token used to push the bump commit. Optional, but strongly
-          recommended -- see the note above on why GITHUB_TOKEN is not enough.
-        required: false
+      app_id:
+        description: 'App ID of the tnoff-ci GitHub App (CI_APP_ID).'
+        required: true
+      app_private_key:
+        description: 'Private key PEM of the tnoff-ci GitHub App (CI_APP_PRIVATE_KEY).'
+        required: true
     outputs:
       old_version:
         description: 'Version on the branch before the bump'
@@ -187,26 +189,28 @@ jobs:
       new_version: ${{ steps.bump.outputs.new_version }}
       version_bumped: ${{ steps.bump.outputs.version_bumped }}
     steps:
+      # Short-lived installation token for the tnoff-ci App, minted per run.
+      #
+      # Replaces the human admin PAT this used to carry. The fleet's rulesets
+      # name the App as a bypass actor (actor_type "Integration", confirmed by
+      # reading the ruleset back on dappertable), so it can push to a protected
+      # `main` -- and unlike GITHUB_TOKEN its pushes DO trigger the follow-up
+      # run the release depends on. The token expires in an hour and can only
+      # write contents and workflows: it cannot change settings, edit rulesets,
+      # approve a review, or merge a PR.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-          # Falls back to GITHUB_TOKEN when no PAT is supplied. The push then
-          # succeeds but triggers no downstream workflow -- see the header.
-          token: ${{ secrets.git_push_token || github.token }}
-
-      # Tested in shell rather than a step-level `if`: the secrets context is
-      # not available to `if`, only to `env` and `with`.
-      - name: Warn when pushing with GITHUB_TOKEN
-        env:
-          GIT_PUSH_TOKEN: ${{ secrets.git_push_token }}
-        run: |
-          if [ -z "${GIT_PUSH_TOKEN}" ]; then
-            echo "::warning::git_push_token not set -- pushing with GITHUB_TOKEN," \
-              "which does not trigger a follow-up workflow run." \
-              "Required checks will not report on the bump commit."
-          fi
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Bump
         id: bump
