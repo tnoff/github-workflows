@@ -19,14 +19,33 @@ name: Renovate
 #     *is* github, the platform token covers release notes and the whole failure
 #     mode disappears. Do not reintroduce it.
 #
-#     CAVEAT, unverified: that reasoning was written when the platform token
-#     was a PAT. It is now a GitHub App installation token, which is scoped to
-#     the installation's repositories -- and changelogs are fetched from repos
-#     OUTSIDE it (actions/checkout, pytest, and so on). If release notes stop
-#     rendering in PR bodies after this change, that is the cause, and
-#     GITHUB_COM_TOKEN comes back for changelogs only. Check a PR body before
-#     rolling this past the first repo: the failure is cosmetic and silent, so
-#     nothing else will report it.
+#     That reasoning was written when the platform token was a PAT, and it
+#     still holds now that it is a GitHub App installation token -- which was
+#     not obvious, because such a token is scoped to the installation's
+#     repositories while changelogs are fetched from repos OUTSIDE it.
+#
+#     Measured 2026-09-03 rather than assumed, on the first real-dependency
+#     PRs the App opened:
+#
+#       public-transit#178          3 markers, github.com/tox-dev/tox
+#       hathor#247                  5 markers
+#       oci-monitoring-exporter#14  4 markers
+#       MMM-BartTimes#11            2 markers, open-telemetry/opentelemetry-js
+#
+#     tox-dev and open-telemetry are neither owned nor installed here, so a
+#     scoped installation token does read public changelogs. hathor#247's five
+#     markers match backup-tool#105, the same dependency group under the old
+#     PAT.
+#
+#     personal-website#102 (nginx) rendered none, which is the dependency
+#     class rather than the token: Renovate resolves changelogs from GitHub
+#     releases and an official Docker Hub image has no such mapping. No
+#     pre-cutover Docker-tag PR exists anywhere in the fleet to baseline
+#     against, so that one is reasoning, not measurement.
+#
+#     If release notes ever DO stop rendering, GITHUB_COM_TOKEN for changelogs
+#     only is the fix. The failure is cosmetic and silent -- no job fails -- so
+#     it has to be looked for in a PR body.
 #
 # Usage in a consumer repo:
 #
