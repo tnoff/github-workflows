@@ -4,13 +4,22 @@
   "packageRules": [
     {
       "description": "Base. Every pep621/dockerfile update lands under the dev- branch prefix. This is load-bearing, not cosmetic: each repo's bump-version job gates on $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\\/dev-/, so the prefix is what decides whether an update bumps VERSION, writes a changelog fragment, and cuts a release. Rules below override it for updates that must not do that.",
-      "matchManagers": ["pep621", "dockerfile"],
+      "matchManagers": [
+        "pep621",
+        "dockerfile"
+      ],
       "additionalBranchPrefix": "dev-"
     },
     {
-      "description": "Low-churn runtime libraries — batch the ones that move often and carry little behaviour. A positive list rather than a catch-all on purpose: a catch-all here would override the `cloud sdks` groupName set by the default preset, since preset rules are applied before this file's. Deliberately excluded and left one-per-MR: sqlalchemy and alembic (ORM and migration tooling against a live database), plus yt-dlp, discord.py, redis, pydantic, davey, spotipy, ytmusicapi, moviepy, asyncpg and aiohttp — the deps where a bad bump is a production incident and you want a single commit to revert.",
-      "matchManagers": ["pep621", "dockerfile"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "description": "Low-churn runtime libraries \u2014 batch the ones that move often and carry little behaviour. A positive list rather than a catch-all on purpose: a catch-all here would override the `cloud sdks` groupName set by the default preset, since preset rules are applied before this file's. Deliberately excluded and left one-per-MR: sqlalchemy and alembic (ORM and migration tooling against a live database), plus yt-dlp, discord.py, redis, pydantic, davey, spotipy, ytmusicapi, moviepy, asyncpg and aiohttp \u2014 the deps where a bad bump is a production incident and you want a single commit to revert.",
+      "matchManagers": [
+        "pep621",
+        "dockerfile"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "matchPackageNames": [
         "click",
         "pytz",
@@ -29,8 +38,11 @@
       "groupName": "runtime deps non-major"
     },
     {
-      "description": "Test, lint and build tooling. Grouped, automerged, and never cuts a release because the test- prefix keeps bump-version from firing. Two changes from the previous version of this rule. First, globs instead of thirteen exact names: that list had drifted past what the repos actually declare, so pytest-postgresql, psycopg[binary] and setuptools were falling through to the dev- prefix and cutting production releases for test-only dependencies — renovate/dev-setuptools-84.x merged into discord-bot on 2026-08-10 and did exactly that, and enheduanna carries setuptools in its test extra too. Second, this rule is now listed LAST and overrides the dev- base rule above, which removes the negated copy of this same list the old config had to carry. That duplication was the reason the drift went unnoticed: adding a dep meant editing two places and forgetting the second failed silently. Note majors are included, so a major pylint or tox bump still automerges behind a green pipeline — unchanged from the previous behaviour; add matchUpdateTypes if you want those reviewed.",
-      "matchManagers": ["pep621", "dockerfile"],
+      "description": "Test, lint and build tooling. Grouped, automerged, and never cuts a release because the test- prefix keeps bump-version from firing. Two changes from the previous version of this rule. First, globs instead of thirteen exact names: that list had drifted past what the repos actually declare, so pytest-postgresql, psycopg[binary] and setuptools were falling through to the dev- prefix and cutting production releases for test-only dependencies \u2014 renovate/dev-setuptools-84.x merged into discord-bot on 2026-08-10 and did exactly that, and enheduanna carries setuptools in its test extra too. Second, this rule is now listed LAST and overrides the dev- base rule above, which removes the negated copy of this same list the old config had to carry. That duplication was the reason the drift went unnoticed: adding a dep meant editing two places and forgetting the second failed silently. Note majors are included, so a major pylint or tox bump still automerges behind a green pipeline \u2014 unchanged from the previous behaviour; add matchUpdateTypes if you want those reviewed. Automerge removed 2026-09-03: the grouping and the test- prefix are what this rule is for, and both stay -- the prefix is load-bearing because it is what keeps bump-version from cutting a release for test-only dependencies. Only the unattended merge is gone.",
+      "matchManagers": [
+        "pep621",
+        "dockerfile"
+      ],
       "matchPackageNames": [
         "pytest",
         "pytest-*",
@@ -55,8 +67,7 @@
         "build"
       ],
       "groupName": "test dependencies",
-      "additionalBranchPrefix": "test-",
-      "automerge": true
+      "additionalBranchPrefix": "test-"
     }
   ]
 }
