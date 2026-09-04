@@ -1,0 +1,154 @@
+name: Trigger image pin bump (dispatch)
+
+# Reusable workflow: after pushing a new image, ask docker-apps to rewrite its
+# pin and open a PR. GitHub-to-GitHub successor to trigger-bump.yml, which
+# fires GitLab's pipeline-trigger API.
+#
+# ---------------------------------------------------------------------------
+# Why a NEW FILE rather than editing trigger-bump.yml
+# ---------------------------------------------------------------------------
+# The input and secret contract changes incompatibly: target_project_id and
+# trigger_token go away, app_client_id and app_private_key arrive. Editing in
+# place would break every consumer the moment Renovate moved its pin past the
+# change -- which is not hypothetical, it is exactly what happened when
+# bump-version.yml renamed app_id to app_client_id: the digest PR moved the pin
+# while the caller still passed the old name, and a workflow-call contract
+# mismatch fails at STARTUP. No job runs, no check reports, and `gh pr checks`
+# says "no checks reported" rather than showing a failure.
+#
+# With a new file, each producer moves deliberately in one commit that changes
+# the `uses:` path and the inputs together. trigger-bump.yml keeps working
+# untouched until the last consumer has moved, then it is deleted.
+#
+# ---------------------------------------------------------------------------
+# What this restores
+# ---------------------------------------------------------------------------
+# trigger-bump.yml had to drop the "Source MR" back-link and the changelog
+# compare link: once a producer was GitHub-canonical its commits no longer
+# existed on the stale GitLab copy, so the downstream lookups queried a project
+# that could not resolve the SHA. With both ends on GitHub the lookups work
+# again, so source_repo and source_sha are sent and docker-apps rebuilds both
+# links.
+#
+# It also removes a failure mode rather than porting it. The GitLab path sent
+# IMAGE_NAME as a trigger variable, and an empty value OVERRODE the downstream
+# job's own -- so a producer whose `image` came back empty failed the bump with
+# an error pointing at docker-apps. Here the image NAME is resolved downstream
+# from bump_source alone; `image` is sent for the record and for the log line,
+# and cannot misdirect a rewrite.
+
+on:
+  workflow_call:
+    inputs:
+      bump_source:
+        description: >-
+          Identifier for this producer. The downstream receiver maps it to the
+          image name and the files pinning it, so this string is a contract
+          with docker-apps' bump-image-pin.yml -- not a free-form label.
+        required: true
+        type: string
+      image:
+        description: >-
+          Full image reference without a tag. Recorded in the dispatch payload
+          and the log line; NOT used to decide what gets rewritten.
+        required: true
+        type: string
+      image_tag:
+        description: 'Tag to pin to, normally the short commit SHA'
+        required: true
+        type: string
+      target_repo:
+        description: 'owner/repo of the GitOps repository to dispatch to'
+        required: false
+        type: string
+        default: 'tnoff/docker-apps'
+      fail_on_error:
+        description: >-
+          Whether a failed dispatch fails this workflow. Defaults false,
+          matching the GitLab job's allow_failure: true -- the image is already
+          pushed, so a downstream automation hiccup should not retroactively
+          fail the producer.
+        required: false
+        type: boolean
+        default: false
+      runner_labels:
+        description: 'Runner labels as JSON array'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    secrets:
+      app_client_id:
+        description: >-
+          Client ID of the tnoff-ci App. The Iv23li... form, NOT the numeric
+          App ID -- create-github-app-token deprecated its `app-id` input in
+          favour of `client-id`.
+        required: true
+      app_private_key:
+        description: >-
+          Private key PEM of the tnoff-ci App. Needs Contents: write on the
+          TARGET repo, which is what the repository_dispatch API requires. The
+          App must be installed on the target as well as on this producer.
+        required: true
+
+jobs:
+  trigger:
+    name: Trigger bump
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      # Scoped to the TARGET repo, not this one. An installation token defaults
+      # to the calling repository; dispatching to docker-apps needs a token
+      # minted for docker-apps, which is what owner + repositories does.
+      - name: Mint App token for the target
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.app_client_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.target_repo }}
+
+      - name: Dispatch the bump
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          BUMP_SOURCE: ${{ inputs.bump_source }}
+          IMAGE: ${{ inputs.image }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          fail() {
+            if [ "${FAIL_ON_ERROR}" = "true" ]; then
+              echo "::error::$1"
+              exit 1
+            fi
+            echo "::warning::$1 (not failing: the image is already pushed)"
+            exit 0
+          }
+
+          [ -n "${BUMP_SOURCE}" ] || fail "bump_source is empty"
+          [ -n "${IMAGE_TAG}" ]   || fail "image_tag is empty"
+          # `image` is recorded, not acted on, so an empty one is a warning
+          # rather than a refusal -- unlike the GitLab path, it cannot
+          # misdirect the rewrite.
+          [ -n "${IMAGE}" ] || echo "::warning::image is empty; the bump will still resolve from bump_source"
+
+          echo "Dispatching ${BUMP_SOURCE} bump to ${TARGET_REPO}: ${IMAGE:-<unset>}:${IMAGE_TAG}"
+
+          if gh api "repos/${TARGET_REPO}/dispatches" \
+              --method POST \
+              --field event_type=bump-image-pin \
+              --field "client_payload[source]=${BUMP_SOURCE}" \
+              --field "client_payload[image]=${IMAGE}" \
+              --field "client_payload[image_tag]=${IMAGE_TAG}" \
+              --field "client_payload[source_repo]=${SOURCE_REPO}" \
+              --field "client_payload[source_sha]=${SOURCE_SHA}"; then
+            echo "Dispatch accepted."
+          else
+            fail "repository_dispatch to ${TARGET_REPO} failed"
+          fi
