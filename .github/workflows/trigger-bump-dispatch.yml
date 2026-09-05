@@ -5,7 +5,7 @@ name: Trigger image pin bump (dispatch)
 # fires GitLab's pipeline-trigger API.
 #
 # ---------------------------------------------------------------------------
-# Why a NEW FILE rather than editing trigger-bump.yml
+# Why this was a NEW FILE rather than an edit to trigger-bump.yml
 # ---------------------------------------------------------------------------
 # The input and secret contract changes incompatibly: target_project_id and
 # trigger_token go away, app_client_id and app_private_key arrive. Editing in
@@ -17,8 +17,13 @@ name: Trigger image pin bump (dispatch)
 # says "no checks reported" rather than showing a failure.
 #
 # With a new file, each producer moves deliberately in one commit that changes
-# the `uses:` path and the inputs together. trigger-bump.yml keeps working
-# untouched until the last consumer has moved, then it is deleted.
+# the `uses:` path and the inputs together. trigger-bump.yml kept working
+# untouched until the last consumer had moved; all seven moved on 2026-09-04
+# and it was deleted on 2026-09-05.
+#
+# gitlab/trigger-bump.yml still exists. It is part of the frozen GitLab
+# template set kept as break-glass, and it fires a pipeline trigger whose
+# token terraform removed -- so it is preserved code, not a working fallback.
 #
 # ---------------------------------------------------------------------------
 # What this restores
