@@ -61,7 +61,10 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.discord_webhook_url }}
           EXTRA_MESSAGE: ${{ inputs.message }}
-          WORKFLOW_URL: ${{ inputs.source_run_url != '' && inputs.source_run_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+          WORKFLOW_URL: >-
+            ${{ inputs.source_run_url != '' && inputs.source_run_url
+            || format('{0}/{1}/actions/runs/{2}',
+            github.server_url, github.repository, github.run_id) }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ inputs.source_branch != '' && inputs.source_branch || github.ref_name }}
           WORKFLOW_NAME: ${{ inputs.source_workflow != '' && inputs.source_workflow || github.workflow }}
