@@ -93,7 +93,7 @@ jobs:
       # analogue of CI_MERGE_REQUEST_DIFF_BASE_SHA on the GitLab template.
       - name: Scan pull request commits
         if: github.event_name == 'pull_request' && !inputs.full_history
-        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b  # v3.97.1
+        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c  # v3.97.4
         with:
           path: ./
           base: ${{ github.event.pull_request.base.sha }}
@@ -102,7 +102,7 @@ jobs:
 
       - name: Scan full history
         if: github.event_name != 'pull_request' || inputs.full_history
-        uses: trufflesecurity/trufflehog@20652fbbdefffcdaa493a5bf57ab2ac6b1db715b  # v3.97.1
+        uses: trufflesecurity/trufflehog@363923b901c911a9164f50b6c423f47c15372b1c  # v3.97.4
         with:
           path: ./
           extra_args: ${{ steps.excludes.outputs.flag }} ${{ inputs.extra_args }}
