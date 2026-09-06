@@ -117,7 +117,22 @@ jobs:
           req = urllib.request.Request(
               webhook_url,
               data=payload.encode(),
-              headers={"Content-Type": "application/json"},
+              # Cloudflare sits in front of Discord and rejects urllib's default
+              # User-Agent ("Python-urllib/3.x") with 403 and error code 1010,
+              # before the request reaches the API at all. Discord's docs
+              # require a User-Agent on API requests; this is that.
+              #
+              # Measured 2026-09-06 against a bogus webhook id, which separates
+              # "blocked by Cloudflare" from "reached Discord":
+              #   default UA  -> 403, body 'error code: 1010'
+              #   explicit UA -> 404, {"message": "Unknown Webhook"}
+              #
+              # Latent since this workflow was written: it had no callers until
+              # notify-failure.yml, so the request path had never run once.
+              headers={
+                  "Content-Type": "application/json",
+                  "User-Agent": "tnoff-ci-notifier (https://github.com/tnoff, 1.0)",
+              },
               method="POST",
           )
           try:
