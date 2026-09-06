@@ -74,7 +74,24 @@ jobs:
           python3 - <<'PYEOF'
           import json, os, sys, urllib.request, urllib.error
 
-          webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
+          # An unset secret used to reach urllib as an empty string and raise
+          # ValueError: unknown url type: '' -- an unhandled traceback, for the
+          # one failure this workflow exists to make legible. Observed for real
+          # on 2026-09-06 when notify-failure.yml went live in a repo before the
+          # terraform apply that grants the secret.
+          #
+          # Still exits non-zero: a silent no-op would mean a repo could be
+          # missing the secret indefinitely with nothing to show for it.
+          webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+          if not webhook_url:
+              print(
+                  "::error::DISCORD_WEBHOOK_URL is empty or unset. "
+                  "terraform/infra/repos.tf writes it to every managed repo via "
+                  "local.github_actions_secrets; terraform and terraform-admin "
+                  "get it from github_actions_secret.ci_alerts_webhook.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
           extra_message = os.environ.get("EXTRA_MESSAGE", "")
 
           fields = [
@@ -108,5 +125,8 @@ jobs:
               print("Discord notification sent")
           except urllib.error.HTTPError as e:
               print(f"Failed to send Discord notification: {e.code} {e.reason}", file=sys.stderr)
+              sys.exit(1)
+          except urllib.error.URLError as e:
+              print(f"Could not reach Discord: {e.reason}", file=sys.stderr)
               sys.exit(1)
           PYEOF
