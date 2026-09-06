@@ -13,6 +13,41 @@ on:
         required: false
         type: string
         default: '["ubuntu-24.04"]'
+      # Source-run overrides.
+      #
+      # A reusable workflow runs INSIDE the caller's run, so github.run_id,
+      # github.workflow and github.sha all describe the caller. That is correct
+      # when a job notifies about its own workflow, and wrong when
+      # notify-failure.yml reports on a run that already finished: every field
+      # would name the notifier instead of the failure.
+      #
+      # Each defaults to empty and falls back to the caller's context below, so
+      # existing callers keep their current behaviour untouched.
+      source_run_url:
+        description: 'URL of the run being reported. Defaults to the calling run.'
+        required: false
+        type: string
+        default: ''
+      source_workflow:
+        description: 'Name of the workflow being reported. Defaults to the calling workflow.'
+        required: false
+        type: string
+        default: ''
+      source_branch:
+        description: 'Branch of the run being reported. Defaults to the calling ref.'
+        required: false
+        type: string
+        default: ''
+      source_actor:
+        description: 'Actor who triggered the run being reported. Defaults to the calling actor.'
+        required: false
+        type: string
+        default: ''
+      source_sha:
+        description: 'Commit SHA of the run being reported. Defaults to the calling SHA.'
+        required: false
+        type: string
+        default: ''
     secrets:
       discord_webhook_url:
         description: 'Discord webhook URL for failure notifications'
@@ -26,12 +61,12 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.discord_webhook_url }}
           EXTRA_MESSAGE: ${{ inputs.message }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_URL: ${{ inputs.source_run_url != '' && inputs.source_run_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          WORKFLOW_NAME: ${{ github.workflow }}
-          ACTOR: ${{ github.actor }}
-          COMMIT_SHA: ${{ github.sha }}
+          BRANCH: ${{ inputs.source_branch != '' && inputs.source_branch || github.ref_name }}
+          WORKFLOW_NAME: ${{ inputs.source_workflow != '' && inputs.source_workflow || github.workflow }}
+          ACTOR: ${{ inputs.source_actor != '' && inputs.source_actor || github.actor }}
+          COMMIT_SHA: ${{ inputs.source_sha != '' && inputs.source_sha || github.sha }}
         run: |
           python3 - <<'PYEOF'
           import json, os, sys, urllib.request, urllib.error
