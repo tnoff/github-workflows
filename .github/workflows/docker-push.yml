@@ -2,7 +2,7 @@ name: Docker push
 
 # Reusable workflow: build an image and push it to OCIR under two tags.
 #
-# GitLab counterpart: /gitlab/buildkit-docker-push.yml. Three things go away.
+# Ported from the now-deleted GitLab template /gitlab/buildkit-docker-push.yml. Three things go away.
 #
 # The bespoke buildkit setup: that template started an ephemeral in-job
 # buildkitd on a unix socket (which needed a privileged pod) and drove it with

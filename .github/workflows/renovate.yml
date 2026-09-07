@@ -6,7 +6,7 @@ name: Renovate
 # repo's renovate.json keeps its grouping, minimumReleaseAge and automerge
 # scoping. Run it on a schedule.
 #
-# GitLab counterpart: /gitlab/renovate.yml.
+# Ported from the now-deleted GitLab template /gitlab/renovate.yml.
 #
 # Two things that template needed and this one does not:
 #

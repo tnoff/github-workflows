@@ -5,7 +5,7 @@ name: Assemble changelog
 # back. Idempotent -- a no-op when there are no fragments, which is what keeps
 # the run it triggers from looping.
 #
-# GitLab counterpart: /gitlab/assemble-changelog.yml. The awk that turns a
+# Ported from the now-deleted GitLab template /gitlab/assemble-changelog.yml. The awk that turns a
 # fragment into bullets and the awk that splices the new section above the
 # first `## [` heading are carried over unchanged: that logic is about the
 # changelog format, not the platform, and both encode bugs already paid for

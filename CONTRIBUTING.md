@@ -6,5 +6,5 @@ issues here:
 **https://github.com/tnoff/github-workflows**
 
 The GitLab project at `tnoff-projects/github-workflows`
-is frozen and kept for history only. Merge requests opened there will not
-be seen.
+is a read-only mirror, refreshed hourly from here. It runs no CI. Merge
+requests opened there will not be seen.

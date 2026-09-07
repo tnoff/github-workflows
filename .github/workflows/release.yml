@@ -3,7 +3,7 @@ name: Release
 # Reusable workflow: cut a GitHub release for a tag the tag workflow created,
 # with notes lifted from the changelog section for that version.
 #
-# GitLab counterpart: /gitlab/release.yml. The 25-line curl + jq + HTTP-code
+# Ported from the now-deleted GitLab template /gitlab/release.yml. The 25-line curl + jq + HTTP-code
 # dance against the releases API becomes one `gh release create`; the awk that
 # extracts the version's section from CHANGELOG.md is carried over unchanged,
 # because that logic is about the changelog format, not the platform.
