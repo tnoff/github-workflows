@@ -29,10 +29,15 @@ name: Fleet mirror
 # GitHub's. Those three tests encode "GitHub is canonical here" without anyone
 # maintaining a list that can go stale -- and each one fails CLOSED:
 #
-#   - enabled remote mirror  -> GitLab is the writer (ci-base-images still is).
-#                               Two writers would fight; skip.
-#   - no GitHub counterpart  -> terraform/terraform-admin/docker-apps have no
-#                               GitHub repo at all; skip.
+#   - enabled remote mirror  -> GitLab is the writer; two writers would fight,
+#                               so skip. Nothing matches this today:
+#                               ci-base-images was the last one and is now
+#                               pending deletion with its mirror removed.
+#   - no GitHub counterpart  -> claude-skills, and the deletion-scheduled
+#                               ci-base-images remnant. terraform,
+#                               terraform-admin and docker-apps were named here
+#                               until they flipped; all three now have GitHub
+#                               repos and are mirrored like everything else.
 #   - not a strict ancestor  -> GitLab holds commits GitHub does not. That is
 #                               either a still-GitLab-canonical repo or real
 #                               divergence, and both need a human. FAIL, loudly.
