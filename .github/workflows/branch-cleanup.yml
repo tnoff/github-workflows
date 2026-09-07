@@ -15,7 +15,7 @@ name: Branch cleanup
 #
 # Run it on a schedule, alongside Renovate.
 #
-# GitLab counterpart: /gitlab/branch-cleanup.yml. Same predicate, rewritten
+# Ported from the now-deleted GitLab template /gitlab/branch-cleanup.yml. Same predicate, rewritten
 # against the GitHub API. The default GITHUB_TOKEN with contents: write can
 # delete refs, so unlike the GitLab template this needs no PAT.
 #

@@ -7,17 +7,18 @@ testing changes see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## What this repo is
 
-A central catalogue of two parallel sets of reusable CI building blocks
-consumed by application repositories:
+A central catalogue of reusable CI building blocks consumed by application
+repositories:
 
 | Layout | Consumer |
 |---|---|
 | `.github/workflows/*.yml` | GitHub Actions repositories (`uses: tnoff/github-workflows/.github/workflows/<file>@<ref>`) |
-| `gitlab/*.yml` | GitLab CI repositories (`include: { project: 'tnoff-projects/github-workflows', file: '/gitlab/<file>', ref: '<ref>' }`) |
 
-The GitHub Actions and GitLab CI sets are not always one-to-one — some
-templates exist in only one. The README has the authoritative list for
-each.
+The README has the authoritative list. A parallel `gitlab/*.yml` surface
+existed until 2026-09-07, when GitLab CI was retired fleet-wide; GitLab is now
+a readable mirror that runs nothing. Several workflow headers still explain
+themselves by contrast with the GitLab template they were ported from — that
+history is deliberate, but the files it names are gone.
 
 ## What this repo is NOT
 
@@ -36,14 +37,6 @@ of an existing workflow is a **breaking change** and must go behind a
 new major version tag. Documentation-only or new-input-with-default
 changes can ride the existing tag.
 
-### Two parallel template surfaces — keep them in sync where they overlap
-
-`gitlab/tag.yml` and `.github/workflows/tag.yml` (and similarly for
-`bump-version`, etc.) share semantics. When you change
-the behaviour of one, audit the other for the same change — drifting
-the GitHub and GitLab versions of "what should be the same template"
-creates the same class of bug across every consumer.
-
 ### VERSION file is the single source of truth for app versions
 
 Apps that consume `ocir-push.yml` / `buildkit-docker-push.yml` read
@@ -53,9 +46,8 @@ their version from a `VERSION` file at the repo root. Rules:
 - **No `v` prefix** (workflows fail on `v0.0.4`)
 - No trailing whitespace
 
-`bump-version.yml` / `gitlab/bump-version.yml` increments this file
-automatically; `tag.yml` / `gitlab/tag.yml` reads it and creates the
-matching git tag.
+`bump-version.yml` increments this file automatically; `tag.yml` reads it
+and creates the matching git tag.
 
 ### Standard image tagging
 
@@ -81,13 +73,6 @@ disable hooks (`--no-verify`) when committing — if a hook is wrong, fix
 the hook config or the file, not the bypass. See
 [DEVELOPMENT.md](DEVELOPMENT.md) for setup.
 
-### Local validation for GitLab CI
-
-`actionlint` only covers GitHub Actions. For changes to `gitlab/`
-templates, validate locally with `gitlab-ci-local` before pushing — it
-catches stage ordering, `extends` misuse, and variable interpolation
-bugs that GitLab's server-side lint won't flag until pipeline run time.
-
 ## Canonical remote
 
 The authoritative remote is **GitHub**: `github.com/tnoff/github-workflows`.
@@ -96,18 +81,9 @@ Open pull requests there. This flipped on 2026-08-26 (see the docs corpus,
 and GitHub was a push mirror, so anything claiming otherwise predates the
 flip.
 
-The GitLab copy is **frozen**, not deleted — at `e410a65c` as of 2026-08-27,
-while GitHub has moved on. That distinction matters for the `gitlab/`
-templates:
-
-- Consumers still on GitLab CI pin 40-char SHAs in their `include:` blocks,
-  and every such SHA is at or before the freeze point, so they all still
-  resolve. Nothing broke.
-- But nothing new can reach them. A change to `gitlab/*.yml` merged here
-  lands on GitHub only, and a consumer's Renovate tracks `git-refs` against
-  the frozen GitLab copy, which reports "up to date" forever with no error.
-
-So `gitlab/*.yml` is effectively **frozen for publication**. Do not add new
-GitLab CI templates, and treat a needed change to an existing one as a
-signal to flip that consumer instead. Do not add new `include:` references
-pointing at `project: 'tnoff-projects/github-workflows'`.
+The GitLab copy is a **readable mirror only**, kept current hourly by
+`.github/workflows/fleet-mirror.yml`. It runs no CI: `.gitlab-ci.yml` and the
+13 `gitlab/*.yml` templates were deleted fleet-wide on 2026-09-07 when the
+GitLab break-glass path was withdrawn rather than repaired (see the docs
+corpus, `projects/github-canonical-migration.md`, "Continuity when GitHub is
+down"). Do not reintroduce a GitLab CI surface here.

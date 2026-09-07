@@ -6,7 +6,7 @@ name: TruffleHog
 # On any other event -- push to the default branch, schedule, manual -- scans
 # the full history of the current branch.
 #
-# GitLab counterpart: /gitlab/trufflehog.yml. That template ran the trufflehog
+# Ported from the now-deleted GitLab template /gitlab/trufflehog.yml. That template ran the trufflehog
 # container directly because the self-hosted runner had no marketplace; here the
 # maintained action is the pinned dependency instead, per the migration's
 # decision to retire pre-baked CI images in favour of pinned actions.

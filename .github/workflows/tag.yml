@@ -2,7 +2,7 @@ name: Tag
 
 # Reusable workflow: tag a commit from a version file.
 #
-# GitLab counterpart: /gitlab/tag.yml. Two mechanical differences:
+# Ported from the now-deleted GitLab template /gitlab/tag.yml. Two mechanical differences:
 #
 #   * The dotenv artifact (build.env carrying VERSION / TAG_CREATED /
 #     TAG_EXISTS into the release job) becomes workflow outputs. Same handoff,

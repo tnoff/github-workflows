@@ -3,7 +3,7 @@ name: Tox
 # Reusable workflow: a Python tox matrix plus a diff-cover gate against the
 # base branch.
 #
-# GitLab counterpart: /gitlab/tox-pipeline.yml (328 lines). This is far
+# Ported from the now-deleted GitLab template /gitlab/tox-pipeline.yml (328 lines). This is far
 # smaller, and every piece that vanished did so for a reason worth recording --
 # each was a workaround for something GitLab or the self-hosted runners could
 # not do, not a feature being dropped.

@@ -16,7 +16,7 @@ name: Bump version file on PR
 # Supports plain-text version files (one line, "1.2.3") and JSON files
 # (package.json). JSON is rewritten with jq at 2-space indent.
 #
-# GitLab counterpart: /gitlab/bump-version.yml.
+# Ported from the now-deleted GitLab template /gitlab/bump-version.yml.
 #
 # ---------------------------------------------------------------------------
 # Push token

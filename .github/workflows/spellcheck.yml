@@ -2,7 +2,7 @@ name: Spellcheck
 
 # Reusable workflow: run pyspelling against a project's spellcheck config.
 #
-# GitLab counterpart: /gitlab/spellcheck.yml, which ran on the pre-baked
+# Ported from the now-deleted GitLab template /gitlab/spellcheck.yml, which ran on the pre-baked
 # $CI_SPELLCHECK_IMAGE. That image is retired with ci-base-images; aspell comes
 # from apt and pyspelling from pip, which together take a few seconds on a
 # hosted runner and need no registry, no cleanup CronJob and no pull secret.

@@ -3,7 +3,7 @@ name: Docker build check
 # Reusable workflow: build an image on a pull request without pushing it, and
 # scan the result for secrets.
 #
-# GitLab counterparts: /gitlab/buildkit-build-check.yml AND
+# Ported from the now-deleted GitLab templates /gitlab/buildkit-build-check.yml AND
 # /gitlab/trufflehog-image.yml. They are one workflow here, which is the single
 # biggest change in this port.
 #
