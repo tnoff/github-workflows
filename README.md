@@ -17,6 +17,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [coverage-store.yml](#coverage-storeyml) — Store pytest coverage baseline artifact
 - [coverage-check.yml](#coverage-checkyml) — Compare PR coverage against baseline
 - [check-action-pins.yml](#check-action-pinsyml) — Enforce SHA-pinned action refs
+- [check-workflow-contracts.yml](#check-workflow-contractsyml) — Validate pinned reusable-workflow calls against the callee
 - [Self-Hosted Runners](#self-hosted-runners)
 
 ## Available Workflows
@@ -462,6 +463,14 @@ The notification includes repository, branch, workflow name, actor, commit SHA, 
 |-------|----------|---------|-------------|
 | `message` | ❌ | `''` | Additional context to include in the notification |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `source_repo` | ❌ | `''` | `owner/repo` of the run being reported. Defaults to the calling repo |
+| `source_run_url` | ❌ | `''` | URL of the run being reported. Defaults to the calling run |
+| `source_workflow` | ❌ | `''` | Name of the workflow being reported. Defaults to the calling workflow |
+| `source_branch` | ❌ | `''` | Branch of the run being reported. Defaults to the calling ref |
+| `source_actor` | ❌ | `''` | Actor who triggered the run being reported. Defaults to the calling actor |
+| `source_sha` | ❌ | `''` | Commit SHA of the run being reported. Defaults to the calling SHA |
+
+The `source_*` overrides exist because a reusable workflow runs **inside the caller's run**: `github.run_id`, `github.workflow` and `github.repository` all describe the caller. That is right when a job reports its own failure, and wrong when a workflow reports on a run that already finished — every field would name the reporter. `notify-failure.yml` and `startup-failure-sweep.yml` both set them.
 
 **Secrets:**
 
@@ -611,6 +620,41 @@ jobs:
 **Permissions:**
 
 No special permissions required. The workflow uses `contents: read` internally.
+
+### `check-workflow-contracts.yml`
+
+Resolves every `uses: <owner>/<repo>/.github/workflows/<file>@<sha>` in the repo and checks the passed `with:` / `secrets:` keys against what the callee declares **at that pinned SHA**. Fails on an undeclared key, a missing required one, or a ref that cannot be resolved. Local `./` calls are skipped — they resolve against the caller's own commit, which `actionlint` already validates.
+
+Worth understanding why this is separate from every other check: a workflow-call contract mismatch fails at **startup**. No job is created, no check reports, and no `workflow_run` event fires, so neither the PR checks list nor `notify-failure.yml` can show it — `gh pr checks` says "no checks reported" rather than showing a failure. Between 2026-09-04 and 2026-09-08 that cost 25 dead `Release` runs across 9 repos, from a single upstream secret rename that an automated pin bump carried into consumers.
+
+Add it to CI in every repo that pins a workflow from here. It is the only check that reads both sides of the contract.
+
+```yaml
+# In your app repository: .github/workflows/ci.yml
+jobs:
+  contracts:
+    uses: tnoff/github-workflows/.github/workflows/check-workflow-contracts.yml@v1
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `workflow_dir` | ❌ | `.github/workflows` | Directory to scan |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+
+**Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `violations_found` | `true` if any contract mismatch was detected |
+
+**Permissions:**
+
+`contents: read`. Reads each callee through the default `GITHUB_TOKEN`, which is enough while `github-workflows` is public.
+
+**Note:** renaming an input or secret here is a contract change with every consumer, and Renovate's digest PR will move the pin without renaming the caller's key. Rename and re-pin in the same commit, or not at all.
 
 ---
 

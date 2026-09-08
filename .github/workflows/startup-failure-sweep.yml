@@ -1,0 +1,227 @@
+name: Startup failure sweep
+
+# Poll the fleet for failures that emit NO event, and report them to #ci-alerts.
+#
+# WHY THIS EXISTS
+#
+# notify-failure.yml is event-driven: it hangs off `workflow_run: completed` and
+# reports anything that finishes as `failure`. Two failure classes never reach
+# it, and both are silent in exactly the way that matters.
+#
+#   1. STARTUP FAILURES. When a workflow file is invalid -- a bad expression, or
+#      a `uses:` whose inputs/secrets do not match the callee's declarations --
+#      the run is created with conclusion `startup_failure` and NO job. GitHub
+#      emits no `workflow_run` event for it at all. Measured 2026-09-08:
+#      personal-website failed at startup at 20:14:05Z and its last
+#      `Notify on failure` run was 14:48 the same day; eastbay, discord-bot and
+#      enheduanna show the same gap. The notifier's `if:` never got the chance
+#      to skip, because the workflow was never triggered.
+#
+#      That is the worst-shaped failure available: the pipeline does nothing AND
+#      says nothing. It cost the fleet 24 dead `Release` runs across 9 repos
+#      between 2026-09-04 and 2026-09-08 before a human happened to look.
+#
+#   2. A FAILED NOTIFIER. notify-failure.yml excludes runs named
+#      `Notify on failure` so a broken notifier cannot notify about itself in a
+#      loop. The stated cost, recorded in the docs corpus under
+#      github-canonical-migration.md as accepted risk, is that a broken notifier
+#      is silent. Polling is what makes it not silent: this run is a different
+#      workflow, so it can say what the notifier could not.
+#
+# Neither is fixable with another event subscription. There is no event. Polling
+# is not the lazy option here, it is the only option.
+#
+# WHY IT LIVES HERE, and is not `self-*` and not `workflow_call`
+#
+# Same reasoning as fleet-mirror.yml, which this deliberately mirrors: it acts on
+# the fleet rather than on this repo, it runs in exactly one place, it takes no
+# per-repo configuration, and this repo is public so an hourly cron is free.
+# A per-repo version would need 28 crons and would bill the three private repos
+# (terraform, terraform-admin, docs) against budgets that cannot absorb it.
+#
+# NO REPO LIST. The fleet is whatever the tnoff-ci App is installed on, read
+# from /installation/repositories. A repo added to the App is swept from the
+# next hour; nothing to maintain and nothing to go stale.
+#
+# THE OVERLAP IS DELIBERATE. The lookback is 70 minutes against an hourly cron,
+# so a run landing in the 10-minute overlap is reported twice. The alternative
+# is state -- a cache entry or a repo variable holding a high-water mark -- and
+# state that expires or fails to write turns a duplicate into a GAP. Startup
+# failures are rare (zero in a normal week; the 24 above were one root cause),
+# so a duplicate costs one extra embed and a gap costs a dead pipeline nobody
+# sees. Priced that way, the overlap is the cheap side.
+
+on:
+  schedule:
+    # Offset from fleet-mirror's :17 so the two fleet sweeps do not contend for
+    # the same API budget on the same minute.
+    - cron: '43 * * * *'
+  workflow_dispatch:
+    inputs:
+      lookback_minutes:
+        description: 'How far back to look, in minutes'
+        required: false
+        type: string
+        default: '70'
+      dry_run:
+        description: 'Report findings in the log without posting to Discord'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two overlapping sweeps would double-report. Never cancel one mid-post.
+  group: startup-failure-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep the fleet
+    runs-on: ubuntu-24.04
+    outputs:
+      findings: ${{ steps.sweep.outputs.findings }}
+      count: ${{ steps.sweep.outputs.count }}
+    steps:
+      # Installation-wide token, not the default GITHUB_TOKEN, which is scoped
+      # to this repo alone and could not read another repo's runs.
+      #
+      # Needs `Actions: read` on the App. Public repos answer
+      # /actions/runs to any valid token, so a missing permission shows up ONLY
+      # on the three private repos -- which is why an unreadable repo below is a
+      # hard failure with the permission named, rather than a skip. A sweep that
+      # quietly covered 25 of 28 repos would be worse than one that does not run.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Sweep
+        id: sweep
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LOOKBACK: ${{ inputs.lookback_minutes || '70' }}
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d "${LOOKBACK} minutes ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "sweeping for runs since ${SINCE} (${LOOKBACK} minutes)"
+          echo
+
+          findings=$(mktemp)
+          unreadable=$(mktemp)
+
+          # /installation/repositories is what an installation token can list;
+          # it IS the fleet definition. Paginated by --paginate because the
+          # default page size would silently truncate at 30.
+          repos=$(gh api --paginate /installation/repositories \
+            --jq '.repositories[] | select(.archived | not) | .full_name')
+          echo "fleet: $(printf '%s\n' "${repos}" | wc -l) repos"
+          echo
+
+          for full in ${repos}; do
+            # Branch on the EXIT STATUS, never on whether stdout looks empty:
+            # gh writes its own errors to stdout as well as stderr, so a 403
+            # body would otherwise be parsed as data.
+            if ! runs=$(gh api "repos/${full}/actions/runs?status=startup_failure&per_page=30" 2>&1); then
+              printf '%s\n' "${full}" >> "${unreadable}"
+              printf '%-30s UNREADABLE\n' "${full}"
+              continue
+            fi
+
+            printf '%s' "${runs}" | jq -c --arg since "${SINCE}" --arg repo "${full}" '
+              .workflow_runs[]
+              | select(.created_at >= $since)
+              | {repo: $repo, workflow: .name, branch: .head_branch,
+                 actor: (.actor.login // "unknown"), sha: .head_sha,
+                 url: .html_url, created: .created_at, kind: "startup_failure"}
+            ' >> "${findings}"
+
+            # The second blind spot: notify-failure.yml excluding itself. A 404
+            # here just means the repo has no notifier, which is not an error.
+            nf_path="repos/${full}/actions/workflows/notify-failure.yml/runs"
+            if nf=$(gh api "${nf_path}?status=failure&per_page=10" 2>/dev/null); then
+              printf '%s' "${nf}" | jq -c --arg since "${SINCE}" --arg repo "${full}" '
+                .workflow_runs[]
+                | select(.created_at >= $since)
+                | {repo: $repo, workflow: .name, branch: .head_branch,
+                   actor: (.actor.login // "unknown"), sha: .head_sha,
+                   url: .html_url, created: .created_at, kind: "dead_notifier"}
+              ' >> "${findings}"
+            fi
+          done
+
+          total=$(wc -l < "${findings}")
+          echo
+          echo "findings: ${total}"
+          jq -r '"  \(.kind)  \(.repo)  \(.workflow)  \(.url)"' < "${findings}" || true
+
+          # A matrix caps at 256 jobs, and a fleet-wide breakage can exceed that.
+          # Truncate LOUDLY -- a silent cap reads as "everything is reported".
+          CAP=20
+          if [ "${total}" -gt "${CAP}" ]; then
+            dropped=$(( total - CAP ))
+            echo "::warning::${total} findings this sweep, reporting the ${CAP} most recent;" \
+                 "${dropped} not posted to Discord. The full list is in this log."
+
+          fi
+          payload=$(jq -sc --argjson cap "${CAP}" 'sort_by(.created) | reverse | .[0:$cap]' < "${findings}")
+
+          {
+            echo "findings=${payload}"
+            echo "count=$(printf '%s' "${payload}" | jq 'length')"
+          } >> "${GITHUB_OUTPUT}"
+
+          # Deliberately last: report what WAS found before failing on what
+          # could not be read, so a permission gap never costs a real alert.
+          if [ -s "${unreadable}" ]; then
+            n_bad=$(wc -l < "${unreadable}")
+            bad_list=$(tr '\n' ' ' < "${unreadable}" | sed 's/ *$//')
+            echo "::error::Could not read Actions runs for ${n_bad} repo(s): ${bad_list}." \
+                 "The tnoff-ci App needs Actions: read -- public repos answer without it," \
+                 "private ones do not. This run's own failure reaches #ci-alerts via" \
+                 "notify-failure.yml."
+            exit 1
+          fi
+
+  notify:
+    name: Report to Discord
+    needs: sweep
+    # A hand-dispatched run defaults to reporting in the log only, so "just show
+    # me" is the safe thing to type. A scheduled run is always the real thing.
+    if: >-
+      needs.sweep.outputs.count != '0' &&
+      (github.event_name == 'schedule' || inputs.dry_run == false)
+    strategy:
+      # One bad webhook post must not suppress the rest of the findings.
+      fail-fast: false
+      matrix:
+        finding: ${{ fromJson(needs.sweep.outputs.findings) }}
+    uses: ./.github/workflows/discord-notify.yml
+    with:
+      # Every field describes the FAILING run, not this sweep. Without the
+      # source_* overrides a reusable workflow reports its caller's context,
+      # which here would name github-workflows on every single alert.
+      source_repo: ${{ matrix.finding.repo }}
+      source_run_url: ${{ matrix.finding.url }}
+      source_workflow: ${{ matrix.finding.workflow }}
+      source_branch: ${{ matrix.finding.branch }}
+      source_actor: ${{ matrix.finding.actor }}
+      source_sha: ${{ matrix.finding.sha }}
+      message: >-
+        ${{ matrix.finding.kind == 'startup_failure'
+        && 'Failed at STARTUP: the workflow file is invalid, so no job ran and
+        no check reported. GitHub emits no workflow_run event for this, which is
+        why it comes from the hourly sweep and not from notify-failure.yml. The
+        usual cause is a uses: whose inputs or secrets no longer match the
+        pinned callee.'
+        || 'The failure NOTIFIER itself failed in this repo. It excludes its own
+        runs to avoid a loop, so nothing else would have said so -- and while it
+        is broken, other failures there may also be going unreported.' }}
+    secrets:
+      discord_webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
