@@ -23,6 +23,15 @@ on:
       #
       # Each defaults to empty and falls back to the caller's context below, so
       # existing callers keep their current behaviour untouched.
+      source_repo:
+        description: >-
+          owner/repo of the run being reported. Defaults to the calling repo.
+          Load-bearing for a fleet-wide caller: startup-failure-sweep.yml runs
+          in github-workflows and reports on other repos, so without this every
+          alert would name github-workflows as the repository that failed.
+        required: false
+        type: string
+        default: ''
       source_run_url:
         description: 'URL of the run being reported. Defaults to the calling run.'
         required: false
@@ -65,7 +74,7 @@ jobs:
             ${{ inputs.source_run_url != '' && inputs.source_run_url
             || format('{0}/{1}/actions/runs/{2}',
             github.server_url, github.repository, github.run_id) }}
-          REPO: ${{ github.repository }}
+          REPO: ${{ inputs.source_repo != '' && inputs.source_repo || github.repository }}
           BRANCH: ${{ inputs.source_branch != '' && inputs.source_branch || github.ref_name }}
           WORKFLOW_NAME: ${{ inputs.source_workflow != '' && inputs.source_workflow || github.workflow }}
           ACTOR: ${{ inputs.source_actor != '' && inputs.source_actor || github.actor }}

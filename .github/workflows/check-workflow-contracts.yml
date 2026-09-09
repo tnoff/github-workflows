@@ -1,0 +1,206 @@
+name: Check Workflow Contracts
+
+# Validate every reusable-workflow call in the calling repo against the callee's
+# DECLARED inputs and secrets, resolved at the pinned SHA.
+#
+# WHY THIS EXISTS
+#
+# A `uses:` call whose `with:`/`secrets:` keys do not match the callee's
+# declarations fails at STARTUP. That is not an ordinary red job: no job is
+# created, no check reports, no `workflow_run` event fires, and `gh pr checks`
+# says "no checks reported" rather than showing a failure. Nothing in the normal
+# feedback path can see it.
+#
+# It is also a failure an automated pin bump WILL cause. github-workflows#53
+# renamed `app_id` -> `app_client_id` and left consumers on their old pins, on
+# the reasoning that both spellings work until the next bump. The next bump is
+# Renovate's, and RENOVATE CANNOT RENAME A SECRET -- it moved the pin past the
+# rename while release.yml still passed the old name. Result, measured
+# 2026-09-08: 24 dead `Release` runs across 9 repos over five days, none of them
+# visible to a checks list or to notify-failure.yml.
+#
+# The rename itself was reviewed and correct. What was missing was anything that
+# reads both halves of the contract at once. This is that.
+#
+# WHAT IT CHECKS, per `uses: <owner>/<repo>/.github/workflows/<file>@<sha>`:
+#
+#   * an input or secret passed but not declared by the callee AT THAT SHA
+#   * a required input or secret the callee declares and the caller omits
+#   * a pinned ref that cannot be resolved at all (deleted file, bad SHA)
+#
+# `secrets: inherit` suppresses the secret half: the caller is not naming keys,
+# so there is nothing to compare.
+#
+# Local calls (`uses: ./.github/workflows/x.yml`) are SKIPPED. They resolve
+# against the caller's own commit, so actionlint already validates them with the
+# edited file in hand -- which is the whole point of the `self-*` workflows here.
+
+on:
+  workflow_call:
+    inputs:
+      workflow_dir:
+        description: 'Directory containing the workflow files to check'
+        required: false
+        type: string
+        default: '.github/workflows'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow (set false for self-hosted runners)'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      violations_found:
+        description: 'Whether any contract mismatch was detected (true/false)'
+        value: ${{ jobs.check.outputs.violations_found }}
+
+jobs:
+  check:
+    name: Check workflow contracts
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    outputs:
+      violations_found: ${{ steps.check.outputs.violations_found }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Check contracts
+        id: check
+        env:
+          # Reads the callee at its pinned SHA. github-workflows is public, so
+          # the default token is enough; a private callee would need a token
+          # with read access to it.
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_DIR: ${{ inputs.workflow_dir }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import base64
+          import os
+          import re
+          import subprocess
+          import sys
+
+          import yaml
+
+          CALL = re.compile(
+              r"^(?P<owner>[^/]+)/(?P<repo>[^/]+)/"
+              r"(?P<path>\.github/workflows/[^@]+)@(?P<ref>[0-9a-f]{40})$"
+          )
+          cache = {}
+
+
+          def fetch(owner, repo, path, ref):
+              """The callee AS PINNED. Reading the callee's default branch instead
+              would pass on exactly the mismatch this exists to catch."""
+              key = (owner, repo, path, ref)
+              if key not in cache:
+                  proc = subprocess.run(
+                      ["gh", "api", f"repos/{owner}/{repo}/contents/{path}?ref={ref}",
+                       "--jq", ".content"],
+                      capture_output=True, text=True,
+                  )
+                  # Branch on the exit status. gh writes its errors to stdout as
+                  # well as stderr, so testing for empty output would read a 404
+                  # body as a workflow file.
+                  cache[key] = (
+                      None if proc.returncode != 0
+                      else yaml.safe_load(base64.b64decode(proc.stdout))
+                  )
+              return cache[key]
+
+
+          def declarations(doc):
+              # PyYAML parses the bare key `on` as the boolean True.
+              trig = {}
+              for k in (True, "on"):
+                  if isinstance(doc, dict) and k in doc:
+                      trig = doc[k] or {}
+                      break
+              call = (trig or {}).get("workflow_call") or {}
+              ins = call.get("inputs") or {}
+              secs = call.get("secrets") or {}
+              req = lambda d: {k for k, v in d.items() if isinstance(v, dict) and v.get("required")}
+              return set(ins), set(secs), req(ins), req(secs)
+
+
+          wfdir = os.environ["WORKFLOW_DIR"]
+          problems = []
+          checked = 0
+
+          for name in sorted(os.listdir(wfdir)):
+              if not name.endswith((".yml", ".yaml")):
+                  continue
+              with open(os.path.join(wfdir, name)) as fh:
+                  doc = yaml.safe_load(fh)
+              for job_id, job in ((doc or {}).get("jobs") or {}).items():
+                  if not isinstance(job, dict) or not isinstance(job.get("uses"), str):
+                      continue
+                  m = CALL.match(job["uses"])
+                  if not m:
+                      continue  # local ./ call, or a tag rather than a SHA
+                  checked += 1
+                  callee = fetch(m["owner"], m["repo"], m["path"], m["ref"])
+                  short = f"{m['path'].rsplit('/', 1)[-1]}@{m['ref'][:7]}"
+                  if callee is None:
+                      problems.append(f"{name} :: {job_id} :: cannot resolve {short}")
+                      continue
+
+                  ins, secs, req_in, req_sec = declarations(callee)
+                  given_in = set((job.get("with") or {}))
+                  raw_secrets = job.get("secrets")
+                  inherit = raw_secrets == "inherit"
+                  given_sec = set() if inherit or not isinstance(raw_secrets, dict) else set(raw_secrets)
+
+                  for k in sorted(given_in - ins):
+                      problems.append(f"{name} :: {job_id} :: passes input `{k}`, not declared by {short}")
+                  for k in sorted(given_sec - secs):
+                      problems.append(f"{name} :: {job_id} :: passes secret `{k}`, not declared by {short}")
+                  for k in sorted(req_in - given_in):
+                      problems.append(f"{name} :: {job_id} :: required input `{k}` of {short} not passed")
+                  if not inherit:
+                      for k in sorted(req_sec - given_sec):
+                          problems.append(f"{name} :: {job_id} :: required secret `{k}` of {short} not passed")
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          out = os.environ.get("GITHUB_OUTPUT")
+
+          def write(path, text):
+              if path:
+                  with open(path, "a") as fh:
+                      fh.write(text)
+
+          if problems:
+              for p in problems:
+                  print(f"  {p}")
+                  print(f"::error::workflow contract mismatch: {p}")
+              write(summary,
+                    "## Workflow Contract Check Failed\n\n"
+                    f"{len(problems)} mismatch(es) across {checked} pinned call(s). "
+                    "Each one fails the calling workflow at STARTUP -- no job runs, "
+                    "no check reports, and no `workflow_run` event fires, so nothing "
+                    "downstream can see it.\n\n```\n" + "\n".join(problems) + "\n```\n\n"
+                    "Fix by matching the caller to the callee at the pinned SHA. If a "
+                    "name was renamed upstream, rename and re-pin in the SAME commit: "
+                    "an automated pin bump moves one side of the contract and cannot "
+                    "move the other.\n")
+              write(out, "violations_found=true\n")
+              sys.exit(1)
+
+          print(f"All {checked} pinned reusable-workflow call(s) match their callee's declarations.")
+          write(summary,
+                "## Workflow Contract Check Passed\n\n"
+                f"All {checked} pinned reusable-workflow call(s) match their callee's "
+                "declared inputs and secrets.\n")
+          write(out, "violations_found=false\n")
+          PYEOF
