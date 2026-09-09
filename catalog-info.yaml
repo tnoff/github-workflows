@@ -1,0 +1,22 @@
+# Backstage catalog descriptor. Discovered automatically -- the portal's GitHub
+# provider reads catalog-info.yaml from the default branch of every repo the
+# tnoff-backstage App can see, so adding this file is the whole of onboarding.
+#
+# No annotations. github.com/project-slug is DERIVED by the portal's
+# AnnotateScmSlugEntityProcessor from the location this file was fetched from,
+# and the techdocs / kubernetes / grafana annotations each assert a target
+# exists. None of those targets do yet; they arrive with the plugins that read
+# them.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: github-workflows
+  description: >-
+    Reusable GitHub Actions workflows -- the CI and release surface for the whole fleet.
+    Consumed through `uses:` at a pinned SHA, which Renovate keeps current. Imported by
+    nearly every repo here; those edges are deliberately not drawn, as an edge from
+    everything to one node is noise rather than information.
+spec:
+  type: library
+  owner: group:default/admin
+  lifecycle: production
