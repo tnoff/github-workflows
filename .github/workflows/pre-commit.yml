@@ -12,10 +12,18 @@ name: pre-commit
 # ---------------------------------------------------------------------------
 # Known gap, deliberately not built yet
 # ---------------------------------------------------------------------------
-# This installs Python tooling only. Repos whose hooks shell out to non-Python
-# binaries -- terraform and terraform-admin need `terraform fmt` and
-# terraform-docs -- cannot use this as written. That input gets added when
-# those repos flip, against their real hook set, rather than guessed at now.
+# This installs Python tooling only, so a hook that shells out to a binary on
+# PATH cannot use it as written.
+#
+# terraform-admin was named here as an example and that was WRONG, measured
+# 2026-09-09: its terraform-fmt and terraform-docs hooks are
+# `language: docker_image`, so pre-commit runs them as containers and needs
+# Docker rather than terraform on PATH. Hosted runners have Docker, both hooks
+# pass, and terraform-admin!24 now calls this workflow. The gap is real for
+# `language: system` hooks; it was never about terraform specifically.
+#
+# terraform's own hook set has not been checked against this claim -- do that
+# before repeating it, rather than inheriting the guess this comment made.
 #
 # Usage in a consumer repo:
 #
