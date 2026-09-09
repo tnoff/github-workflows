@@ -43,13 +43,30 @@ name: Startup failure sweep
 # from /installation/repositories. A repo added to the App is swept from the
 # next hour; nothing to maintain and nothing to go stale.
 #
-# THE OVERLAP IS DELIBERATE. The lookback is 70 minutes against an hourly cron,
-# so a run landing in the 10-minute overlap is reported twice. The alternative
-# is state -- a cache entry or a repo variable holding a high-water mark -- and
-# state that expires or fails to write turns a duplicate into a GAP. Startup
-# failures are rare (zero in a normal week; the 24 above were one root cause),
-# so a duplicate costs one extra embed and a gap costs a dead pipeline nobody
-# sees. Priced that way, the overlap is the cheap side.
+# THE LOOKBACK IS SIZED FROM MEASURED CRON BEHAVIOUR, NOT FROM THE CRON
+#
+# This shipped with a 70-minute lookback against an hourly cron, on the
+# reasoning that a 10-minute overlap costs a duplicate embed while state that
+# expires costs a gap. The pricing was right. The premise was not: **an hourly
+# cron does not run hourly.**
+#
+# Measured 2026-09-09 over 8 days of `fleet-mirror.yml`, also `cron: '17 * * * *'`
+# in this same repo: 50 scheduled runs where 190 were due, so **74% of slots are
+# dropped**. Gaps ran min 2.0h, median 4.0h, max 6.0h -- and **50 of 50 exceeded
+# 70 minutes**. The original design would therefore have missed very nearly every
+# startup failure while reporting itself healthy, which is precisely the shape of
+# bug this workflow exists to catch.
+#
+# So: a lookback wider than the worst observed gap (8h default vs 6h max), plus a
+# high-water mark to suppress the duplicates that width would otherwise cause.
+# The state is strictly an OPTIMISATION and is fail-safe by construction -- it can
+# only ever remove duplicates, never create a gap. A cache miss falls back to
+# reporting the whole window. That ordering is what makes state acceptable here
+# when it was not before.
+#
+# It also reports its own coverage loss: if the stored mark is older than the
+# window reaches, the sweep says how much time went unswept rather than quietly
+# resuming.
 
 on:
   schedule:
@@ -59,10 +76,12 @@ on:
   workflow_dispatch:
     inputs:
       lookback_minutes:
-        description: 'How far back to look, in minutes'
+        description: >-
+          How far back to look, in minutes. Default 480 (8h) is sized from the
+          measured 6h worst-case gap between scheduled runs, not from the cron.
         required: false
         type: string
-        default: '70'
+        default: '480'
       dry_run:
         description: 'Report findings in the log without posting to Discord'
         required: false
@@ -101,16 +120,56 @@ jobs:
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
+      # High-water mark from the previous sweep. Cache rather than a repo
+      # variable because writing a variable needs a permission the App does not
+      # carry, and because a miss here is harmless by design: no mark means the
+      # full window is reported, which is duplicates rather than silence.
+      #
+      # The key is unique per run so each sweep writes a fresh entry; the
+      # restore-keys prefix returns the most recent one. Entries evict after 7
+      # days unused, and the sweep runs every few hours, so it stays warm.
+      - name: Restore the high-water mark
+        id: hwm
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: .sweep-hwm
+          key: startup-sweep-hwm-${{ github.run_id }}
+          restore-keys: startup-sweep-hwm-
+
       - name: Sweep
         id: sweep
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          LOOKBACK: ${{ inputs.lookback_minutes || '70' }}
+          LOOKBACK: ${{ inputs.lookback_minutes || '480' }}
         run: |
           set -euo pipefail
 
-          SINCE=$(date -u -d "${LOOKBACK} minutes ago" +%Y-%m-%dT%H:%M:%SZ)
-          echo "sweeping for runs since ${SINCE} (${LOOKBACK} minutes)"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          WINDOW=$(date -u -d "${LOOKBACK} minutes ago" +%Y-%m-%dT%H:%M:%SZ)
+
+          # The floor is the LATER of the window and the previous mark, so a
+          # finding already reported is not reported again. ISO-8601 UTC strings
+          # sort lexicographically, which is why a plain string compare is safe.
+          SINCE="${WINDOW}"
+          if [ -s .sweep-hwm ]; then
+            HWM=$(tr -d '[:space:]' < .sweep-hwm)
+            if [[ "${HWM}" > "${WINDOW}" ]]; then
+              SINCE="${HWM}"
+            else
+              # The window did not reach back to where the last sweep stopped:
+              # that interval was never swept by anyone. Say so -- silently
+              # resuming is how a gap becomes invisible.
+              echo "::warning::Coverage gap: the last sweep marked ${HWM} but this" \
+                   "window only reaches ${WINDOW}. Runs between those times were" \
+                   "never swept. Scheduled runs are being dropped more than the" \
+                   "${LOOKBACK}-minute lookback allows for; widen it."
+            fi
+          else
+            echo "no stored mark (first run or evicted cache): reporting the whole window," \
+                 "which may duplicate alerts already sent"
+          fi
+
+          echo "sweeping for runs since ${SINCE} (window ${LOOKBACK}m from ${WINDOW})"
           echo
 
           findings=$(mktemp)
@@ -177,6 +236,10 @@ jobs:
             echo "count=$(printf '%s' "${payload}" | jq 'length')"
           } >> "${GITHUB_OUTPUT}"
 
+          # The scan boundary, not the newest finding: everything up to NOW has
+          # now been looked at, whether or not it produced a finding.
+          printf '%s\n' "${NOW}" > .sweep-hwm
+
           # Deliberately last: report what WAS found before failing on what
           # could not be read, so a permission gap never costs a real alert.
           if [ -s "${unreadable}" ]; then
@@ -188,6 +251,17 @@ jobs:
                  "notify-failure.yml."
             exit 1
           fi
+
+      # `always()` so a sweep that fails on an unreadable repo still records the
+      # ground it covered. Losing the mark there would re-report every finding
+      # in the window on the next run, turning one permission error into a burst
+      # of duplicate alerts.
+      - name: Save the high-water mark
+        if: always() && hashFiles('.sweep-hwm') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: .sweep-hwm
+          key: startup-sweep-hwm-${{ github.run_id }}
 
   notify:
     name: Report to Discord
@@ -217,7 +291,7 @@ jobs:
         ${{ matrix.finding.kind == 'startup_failure'
         && 'Failed at STARTUP: the workflow file is invalid, so no job ran and
         no check reported. GitHub emits no workflow_run event for this, which is
-        why it comes from the hourly sweep and not from notify-failure.yml. The
+        why it comes from the periodic sweep and not from notify-failure.yml. The
         usual cause is a uses: whose inputs or secrets no longer match the
         pinned callee.'
         || 'The failure NOTIFIER itself failed in this repo. It excludes its own
