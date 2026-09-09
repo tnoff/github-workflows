@@ -625,7 +625,7 @@ No special permissions required. The workflow uses `contents: read` internally.
 
 Resolves every `uses: <owner>/<repo>/.github/workflows/<file>@<sha>` in the repo and checks the passed `with:` / `secrets:` keys against what the callee declares **at that pinned SHA**. Fails on an undeclared key, a missing required one, or a ref that cannot be resolved. Local `./` calls are skipped — they resolve against the caller's own commit, which `actionlint` already validates.
 
-Worth understanding why this is separate from every other check: a workflow-call contract mismatch fails at **startup**. No job is created, no check reports, and no `workflow_run` event fires, so neither the PR checks list nor `notify-failure.yml` can show it — `gh pr checks` says "no checks reported" rather than showing a failure. Between 2026-09-04 and 2026-09-08 that cost 25 dead `Release` runs across 9 repos, from a single upstream secret rename that an automated pin bump carried into consumers.
+Worth understanding why this is separate from every other check: a workflow-call contract mismatch fails at **startup**. No job is created, no check reports, and no `workflow_run` event fires, so neither the PR checks list nor `notify-failure.yml` can show it — `gh pr checks` says "no checks reported" rather than showing a failure. Between 2026-09-04 and 2026-09-08 that cost 26 dead `Release` runs across 9 repos, from a single upstream secret rename that an automated pin bump carried into consumers.
 
 Add it to CI in every repo that pins a workflow from here. It is the only check that reads both sides of the contract.
 
