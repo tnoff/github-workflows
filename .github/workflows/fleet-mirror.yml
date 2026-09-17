@@ -126,8 +126,10 @@ jobs:
           # Reads GitHub. Needs to see private repos -- `docs` is private, and
           # the default GITHUB_TOKEN is scoped to this repo alone.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          # Pushes to GitLab as tnoff-robot, a group Maintainer, which is what
+          # Pushes to GitLab as tnoff-ci, a group Maintainer, which is what
           # protected `main` requires (push_access_level = maintainer).
+          # tnoff-ci is a GitLab Service Account, not a human-shaped user --
+          # see docs/projects/gitlab-service-account-mirror-token.md.
           GITLAB_TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
           GITLAB_GROUP: tnoff-projects
           GITHUB_OWNER: tnoff
@@ -295,7 +297,7 @@ jobs:
             # -o ci.skip: see the header. Without it this is a trigger, not a
             # mirror.
             if git -C "${work}/repo" push --porcelain -o ci.skip \
-                 "https://tnoff-robot:${GITLAB_TOKEN}@gitlab.com/${GITLAB_GROUP}/${path}.git" \
+                 "https://tnoff-ci:${GITLAB_TOKEN}@gitlab.com/${GITLAB_GROUP}/${path}.git" \
                  "refs/heads/${gh_default}:refs/heads/${gl_default}" \
                  "refs/tags/*:refs/tags/*" > "${work}/push.log" 2>&1; then
               printf '%-26s pushed %s commits (%s -> %s)\n' \
