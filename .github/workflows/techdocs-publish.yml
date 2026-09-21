@@ -1,0 +1,111 @@
+name: Publish TechDocs
+
+# Reusable workflow: build a component's mkdocs site with @techdocs/cli and
+# publish it straight to an S3-compatible TechDocs storage bucket.
+#
+# This is the "recommended deployment approach" from
+# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach --
+# CI builds and publishes, the backend only ever reads. That is not optional
+# for this fleet's backstage: it runs with techdocs.builder: external because
+# the pod has no Docker available to generate on demand (docker-apps +
+# tnoff/backstage#20). GitHub-hosted runners DO have Docker by default, which
+# is why `techdocs-cli generate`'s default docker-based mkdocs build works
+# here with no extra setup.
+#
+# Ported out of tnoff/terraform-modules#64, its first caller, once a second
+# repo needed the same handful of steps.
+#
+# Usage in a consumer repo (see tnoff/terraform-modules for a full example):
+#
+#   on:
+#     push:
+#       branches: [main]
+#       paths: ['docs/**', 'mkdocs.yml', 'catalog-info.yaml']
+#
+#   jobs:
+#     publish:
+#       uses: tnoff/github-workflows/.github/workflows/techdocs-publish.yml@<sha>
+#       with:
+#         entity_ref: default/Component/<name>
+#       secrets:
+#         techdocs_s3_access_key_id: ${{ secrets.TECHDOCS_S3_ACCESS_KEY_ID }}
+#         techdocs_s3_secret_access_key: ${{ secrets.TECHDOCS_S3_SECRET_ACCESS_KEY }}
+#         techdocs_s3_bucket_name: ${{ secrets.TECHDOCS_S3_BUCKET_NAME }}
+#         techdocs_s3_endpoint: ${{ secrets.TECHDOCS_S3_ENDPOINT }}
+#         techdocs_s3_region: ${{ secrets.TECHDOCS_S3_REGION }}
+
+on:
+  workflow_call:
+    inputs:
+      entity_ref:
+        description: >-
+          Backstage entity uid, namespace/Kind/name (case-sensitive). Example:
+          default/Component/terraform-modules. Passed straight to
+          `techdocs-cli publish --entity`.
+        required: true
+        type: string
+      legacy_copy_readme_to_index:
+        description: >-
+          Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`. Needed
+          whenever mkdocs.yml's nav points at README.md (or any file other
+          than index.md) for the home page and docs/index.md does not exist --
+          without it the site builds fine but TechDocs serves a bare 404 at
+          the component's docs root. Safe to leave true even when docs/
+          already has an index.md.
+        required: false
+        type: boolean
+        default: true
+      techdocs_cli_version:
+        description: 'Pinned @techdocs/cli version, passed to npx as @techdocs/cli@<version>'
+        required: false
+        type: string
+        default: '1.12.0'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+    secrets:
+      techdocs_s3_access_key_id:
+        required: true
+      techdocs_s3_secret_access_key:
+        required: true
+      techdocs_s3_bucket_name:
+        required: true
+      techdocs_s3_endpoint:
+        required: true
+      techdocs_s3_region:
+        required: true
+
+jobs:
+  publish:
+    name: Generate and publish
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Generate docs
+        env:
+          CLI_VERSION: ${{ inputs.techdocs_cli_version }}
+          LEGACY_FLAG: ${{ inputs.legacy_copy_readme_to_index && '--legacyCopyReadmeMdToIndexMd' || '' }}
+        run: npx --yes "@techdocs/cli@${CLI_VERSION}" generate ${LEGACY_FLAG}
+
+      - name: Publish docs
+        env:
+          CLI_VERSION: ${{ inputs.techdocs_cli_version }}
+          ENTITY_REF: ${{ inputs.entity_ref }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.techdocs_s3_access_key_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.techdocs_s3_secret_access_key }}
+          AWS_REGION: ${{ secrets.techdocs_s3_region }}
+          BUCKET_NAME: ${{ secrets.techdocs_s3_bucket_name }}
+          ENDPOINT: ${{ secrets.techdocs_s3_endpoint }}
+        run: >-
+          npx --yes "@techdocs/cli@${CLI_VERSION}" publish
+          --publisher-type awsS3
+          --storage-name "${BUCKET_NAME}"
+          --awsEndpoint "${ENDPOINT}"
+          --awsS3ForcePathStyle
+          --entity "${ENTITY_REF}"

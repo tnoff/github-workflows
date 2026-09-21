@@ -14,6 +14,7 @@ Reusable GitHub Actions workflows for standardizing CI/CD across all application
 - [check-pr-labels.yml](#check-pr-labelsyml) — Validate PR labels and merge conditions
 - [dependabot-auto-approve.yml](#dependabot-auto-approveyml) — Auto-approve Dependabot PRs
 - [discord-notify.yml](#discord-notifyyml) — Send failure notifications to Discord
+- [techdocs-publish.yml](#techdocs-publishyml) — Build and publish a component's TechDocs site
 - [coverage-store.yml](#coverage-storeyml) — Store pytest coverage baseline artifact
 - [coverage-check.yml](#coverage-checkyml) — Compare PR coverage against baseline
 - [check-action-pins.yml](#check-action-pinsyml) — Enforce SHA-pinned action refs
@@ -477,6 +478,55 @@ The `source_*` overrides exist because a reusable workflow runs **inside the cal
 | Secret | Required | Description |
 |--------|----------|-------------|
 | `discord_webhook_url` | ✅ | Discord webhook URL |
+
+**Permissions:**
+
+No special permissions required.
+
+### `techdocs-publish.yml`
+
+Builds a component's mkdocs site with `@techdocs/cli` and publishes it to an S3-compatible TechDocs storage bucket, on every push that touches its docs. This is the setup TechDocs backends running with `techdocs.builder: external` require -- they only ever read from storage, so something else has to build and publish. GitHub-hosted runners have Docker available by default, which is what `techdocs-cli generate` needs and what a minimal backend image typically does not have.
+
+```yaml
+# In your app repository: .github/workflows/techdocs-publish.yml
+name: Publish TechDocs
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', 'mkdocs.yml', 'catalog-info.yaml']
+
+jobs:
+  publish:
+    uses: tnoff/github-workflows/.github/workflows/techdocs-publish.yml@v1
+    with:
+      entity_ref: default/Component/my-service
+    secrets:
+      techdocs_s3_access_key_id: ${{ secrets.TECHDOCS_S3_ACCESS_KEY_ID }}
+      techdocs_s3_secret_access_key: ${{ secrets.TECHDOCS_S3_SECRET_ACCESS_KEY }}
+      techdocs_s3_bucket_name: ${{ secrets.TECHDOCS_S3_BUCKET_NAME }}
+      techdocs_s3_endpoint: ${{ secrets.TECHDOCS_S3_ENDPOINT }}
+      techdocs_s3_region: ${{ secrets.TECHDOCS_S3_REGION }}
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `entity_ref` | ✅ | | Backstage entity uid, `namespace/Kind/name` (case-sensitive), e.g. `default/Component/my-service` |
+| `legacy_copy_readme_to_index` | ❌ | `true` | Passes `--legacyCopyReadmeMdToIndexMd` to `techdocs-cli generate`. Needed whenever `mkdocs.yml`'s nav points at `README.md` (or anything other than `index.md`) for the home page and `docs/index.md` doesn't exist -- without it the site builds fine but TechDocs serves a bare 404 at the docs root. Safe to leave on even when `docs/index.md` already exists. |
+| `techdocs_cli_version` | ❌ | `1.12.0` | Pinned `@techdocs/cli` version |
+| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+
+**Secrets:**
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `techdocs_s3_access_key_id` | ✅ | Access key for a bucket-scoped identity with write access to the TechDocs bucket |
+| `techdocs_s3_secret_access_key` | ✅ | Secret key for the same identity |
+| `techdocs_s3_bucket_name` | ✅ | Target bucket name |
+| `techdocs_s3_endpoint` | ✅ | S3-compatible endpoint URL (e.g. an OCI Object Storage endpoint) |
+| `techdocs_s3_region` | ✅ | Region used for SigV4 signing against the endpoint above |
 
 **Permissions:**
 
