@@ -3,14 +3,14 @@ name: Publish TechDocs
 # Reusable workflow: build a component's mkdocs site with @techdocs/cli and
 # publish it straight to an S3-compatible TechDocs storage bucket.
 #
-# This is the "recommended deployment approach" from
-# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach --
-# CI builds and publishes, the backend only ever reads. That is not optional
-# for this fleet's backstage: it runs with techdocs.builder: external because
-# the pod has no Docker available to generate on demand (docker-apps +
-# tnoff/backstage#20). GitHub-hosted runners DO have Docker by default, which
-# is why `techdocs-cli generate`'s default docker-based mkdocs build works
-# here with no extra setup.
+# This is the "recommended deployment approach" from Backstage's own docs
+# (see the TechDocs how-to-guides, "migrate from basic to recommended
+# deployment approach") -- CI builds and publishes, the backend only ever
+# reads. That is not optional for this fleet's backstage: it runs with
+# techdocs.builder: external because the pod has no Docker available to
+# generate on demand (docker-apps + tnoff/backstage#20). GitHub-hosted
+# runners DO have Docker by default, which is why `techdocs-cli generate`'s
+# default docker-based mkdocs build works here with no extra setup.
 #
 # Ported out of tnoff/terraform-modules#64, its first caller, once a second
 # repo needed the same handful of steps.
@@ -90,8 +90,14 @@ jobs:
       - name: Generate docs
         env:
           CLI_VERSION: ${{ inputs.techdocs_cli_version }}
-          LEGACY_FLAG: ${{ inputs.legacy_copy_readme_to_index && '--legacyCopyReadmeMdToIndexMd' || '' }}
-        run: npx --yes "@techdocs/cli@${CLI_VERSION}" generate ${LEGACY_FLAG}
+          LEGACY_COPY: ${{ inputs.legacy_copy_readme_to_index }}
+        run: |
+          set -euo pipefail
+          if [ "${LEGACY_COPY}" = "true" ]; then
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --legacyCopyReadmeMdToIndexMd
+          else
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate
+          fi
 
       - name: Publish docs
         env:
