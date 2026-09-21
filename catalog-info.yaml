@@ -14,8 +14,10 @@ metadata:
   description: >-
     Reusable GitHub Actions workflows -- the CI and release surface for the whole fleet.
     Consumed through `uses:` at a pinned SHA, which Renovate keeps current. Imported by
-    nearly every repo here; those edges are deliberately not drawn, as an edge from
-    everything to one node is noise rather than information.
+    nearly every repo here; only terraform, terraform-admin, terraform-modules and
+    docker-apps draw the dependsOn edge explicitly, since those are what actually applies
+    to the fleet. The rest of the fan-in is still left undrawn, as an edge from everything
+    to one node is noise rather than information.
 spec:
   type: library
   owner: group:default/admin
