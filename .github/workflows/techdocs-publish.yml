@@ -46,15 +46,20 @@ on:
         type: string
       legacy_copy_readme_to_index:
         description: >-
-          Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`. Needed
-          whenever mkdocs.yml's nav points at README.md (or any file other
-          than index.md) for the home page and docs/index.md does not exist --
-          without it the site builds fine but TechDocs serves a bare 404 at
-          the component's docs root. Safe to leave true even when docs/
-          already has an index.md.
+          Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`, which
+          copies docs/README.md to docs/index.md before building. Defaults
+          false because it is actively harmful whenever docs/README.md
+          already exists: mkdocs treats the resulting index.md/README.md pair
+          as a conflict and silently drops README.md from the build, which
+          leaves every link that points at README.md -- including a
+          mkdocs.yml nav entry -- pointing at a page that was never
+          published. mkdocs already falls back to README.md as the implicit
+          homepage on its own when no index.md exists at all, so this flag
+          is only for the genuinely rare case of a docs/ with neither
+          index.md nor README.md.
         required: false
         type: boolean
-        default: true
+        default: false
       techdocs_cli_version:
         description: 'Pinned @techdocs/cli version, passed to npx as @techdocs/cli@<version>'
         required: false

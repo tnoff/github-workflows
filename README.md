@@ -514,7 +514,7 @@ jobs:
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `entity_ref` | ✅ | | Backstage entity uid, `namespace/Kind/name` (case-sensitive), e.g. `default/Component/my-service` |
-| `legacy_copy_readme_to_index` | ❌ | `true` | Passes `--legacyCopyReadmeMdToIndexMd` to `techdocs-cli generate`. Needed whenever `mkdocs.yml`'s nav points at `README.md` (or anything other than `index.md`) for the home page and `docs/index.md` doesn't exist -- without it the site builds fine but TechDocs serves a bare 404 at the docs root. Safe to leave on even when `docs/index.md` already exists. |
+| `legacy_copy_readme_to_index` | ❌ | `false` | Passes `--legacyCopyReadmeMdToIndexMd` to `techdocs-cli generate`, copying `docs/README.md` to `docs/index.md` before building. Defaults off because it's actively harmful when `docs/README.md` already exists: mkdocs treats the resulting pair as a conflict and drops `README.md` from the build, breaking every link that points at it (including a nav entry). mkdocs already falls back to `README.md` as the homepage on its own when no `index.md` exists -- only turn this on for a `docs/` with neither file. |
 | `techdocs_cli_version` | ❌ | `1.12.0` | Pinned `@techdocs/cli` version |
 | `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
 
