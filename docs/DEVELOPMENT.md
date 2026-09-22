@@ -220,6 +220,7 @@ The pre-commit configuration (`.pre-commit-config.yaml`) runs:
 6. **mixed-line-ending** - Prevents mixed line endings
 7. **yamllint** - Lints YAML files for style and syntax
 8. **actionlint** - Validates GitHub Actions workflows
+9. **check-action-sha-pin** - Enforces that every `uses:` ref in `.github/workflows/` is pinned to a full 40-character commit SHA
 
 ### Running Manually
 
