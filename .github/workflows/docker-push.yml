@@ -1,6 +1,8 @@
 name: Docker push
 
-# Reusable workflow: build an image and push it to OCIR under two tags.
+# Reusable workflow: build an image and push it to OCIR under two tags
+# (`latest`/`tag_override` plus an immutable per-commit tag), or just the
+# first if the caller sets single_tag: true.
 #
 # Ported from the now-deleted GitLab template /gitlab/buildkit-docker-push.yml. Three things go away.
 #
@@ -57,6 +59,17 @@ on:
         required: false
         type: string
         default: ''
+      single_tag:
+        description: >-
+          Push only the primary tag, no immutable per-commit second tag.
+          Default false preserves today's behavior for every existing
+          consumer. For producers where nothing ever pulls a specific past
+          build -- a laptop-rebuilt dev tool, not a deployed workload -- an
+          unbounded per-merge tag is pure accumulation with no consumer, and
+          `secondary_tag` comes back empty rather than computed-but-unused.
+        required: false
+        type: boolean
+        default: false
       cache:
         description: 'Use the GitHub Actions layer cache'
         required: false
@@ -108,7 +121,7 @@ on:
         description: 'The moving tag (latest, or tag_override)'
         value: ${{ jobs.push.outputs.primary_tag }}
       secondary_tag:
-        description: 'The immutable per-commit tag'
+        description: 'The immutable per-commit tag, or empty when single_tag is true'
         value: ${{ jobs.push.outputs.secondary_tag }}
 
 jobs:
@@ -132,9 +145,11 @@ jobs:
           NAMESPACE: ${{ inputs.namespace }}
           REPO_NAME: ${{ inputs.repo_name }}
           TAG_OVERRIDE: ${{ inputs.tag_override }}
+          SINGLE_TAG: ${{ inputs.single_tag }}
         run: |
           set -euo pipefail
           SHORT_SHA="$(git rev-parse --short HEAD)"
+          IMAGE="${REGISTRY}/${NAMESPACE}/${REPO_NAME}"
           if [ -n "${TAG_OVERRIDE}" ]; then
             PRIMARY="${TAG_OVERRIDE}"
             SECONDARY="${TAG_OVERRIDE}-${SHORT_SHA}"
@@ -142,10 +157,19 @@ jobs:
             PRIMARY="latest"
             SECONDARY="${SHORT_SHA}"
           fi
+          if [ "${SINGLE_TAG}" = "true" ]; then
+            TAGS="${IMAGE}:${PRIMARY}"
+            SECONDARY=""
+          else
+            TAGS="$(printf '%s:%s\n%s:%s' "${IMAGE}" "${PRIMARY}" "${IMAGE}" "${SECONDARY}")"
+          fi
           {
-            echo "image=${REGISTRY}/${NAMESPACE}/${REPO_NAME}"
+            echo "image=${IMAGE}"
             echo "primary_tag=${PRIMARY}"
             echo "secondary_tag=${SECONDARY}"
+            echo "tags<<TAGS_EOF"
+            echo "${TAGS}"
+            echo "TAGS_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
@@ -158,12 +182,15 @@ jobs:
           username: ${{ secrets.oci_username }}
           password: ${{ secrets.oci_token }}
 
-      # Both tags in one invocation. The GitLab template ran buildctl twice,
-      # once per tag, because a single buildctl build takes one --output; the
-      # second run was fully cached but still re-exported. build-push-action
-      # takes a tag list, so the image is built once and both tags point at the
-      # same digest -- which also avoids the "push displaces sibling tag"
-      # behaviour the fleet has hit before with identical digests.
+      # Both tags in one invocation (or the one tag single_tag leaves). The
+      # GitLab template ran buildctl twice, once per tag, because a single
+      # buildctl build takes one --output; the second run was fully cached
+      # but still re-exported. build-push-action takes a tag list, so the
+      # image is built once and every tag points at the same digest -- which
+      # also avoids the "push displaces sibling tag" behaviour the fleet has
+      # hit before with identical digests. The list itself is computed in the
+      # resolve step above (steps.refs.outputs.tags), not inlined here, so
+      # single_tag only has to be branched on once.
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -172,8 +199,6 @@ jobs:
           platforms: ${{ inputs.platform }}
           build-args: ${{ inputs.build_args }}
           push: true
-          tags: |
-            ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.primary_tag }}
-            ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.secondary_tag }}
+          tags: ${{ steps.refs.outputs.tags }}
           cache-from: ${{ inputs.cache && 'type=gha' || '' }}
           cache-to: ${{ inputs.cache && 'type=gha,mode=min' || '' }}
