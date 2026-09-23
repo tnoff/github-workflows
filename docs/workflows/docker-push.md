@@ -16,6 +16,7 @@
 | registry | OCIR registry host, e.g. iad.ocir.io | `string` | n/a | yes |
 | repo_name | Repository name within the namespace | `string` | n/a | yes |
 | runner_labels | Runner labels as JSON array | `string` | `["ubuntu-24.04-arm"]` | no |
+| single_tag | Push only the primary tag, no immutable per-commit second tag. Default false preserves today's behavior for every existing consumer. For producers where nothing ever pulls a specific past build -- a laptop-rebuilt dev tool, not a deployed workload -- an unbounded per-merge tag is pure accumulation with no consumer, and `secondary_tag` comes back empty rather than computed-but-unused. | `boolean` | `false` | no |
 | tag_override | When set, tags are <override> and <override>-<short sha> instead of `latest` and <short sha>. Used by producers that publish variants. | `string` | `` | no |
 
 ## Secrets
@@ -31,4 +32,4 @@
 | :--- | :---------- |
 | image | Full image reference without a tag |
 | primary_tag | The moving tag (latest, or tag_override) |
-| secondary_tag | The immutable per-commit tag |
+| secondary_tag | The immutable per-commit tag, or empty when single_tag is true |
