@@ -2,7 +2,7 @@
 
 Guidance for AI coding agents working in this repository. For the full
 catalogue of reusable workflows / templates (inputs, secrets, outputs,
-examples) see [README.md](README.md); for local setup, linting, and
+examples) see [README.md](../README.md); for local setup, linting, and
 testing changes see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## What this repo is
@@ -23,9 +23,11 @@ history is deliberate, but the files it names are gone.
 ## What this repo is NOT
 
 It does not host any consumer-side workflow / pipeline. It only exports
-reusable building blocks. The repo's own `.github/workflows/auto-tag.yml`
-(or similar self-management workflow) is internal plumbing for tagging
-*this* repo and is not a public surface.
+reusable building blocks. This repo's own `.github/workflows/self-*.yml`
+files (`self-ci.yml`, `self-scheduled.yml`, `self-tag.yml`) are internal
+plumbing for linting, scheduling, and tagging *this* repo -- they call
+this repo's own reusable workflows through a local `uses: ./...` path
+rather than a pinned ref, and are not a public surface.
 
 ## Non-obvious rules to honour
 
@@ -63,7 +65,7 @@ without pushing, depending on inputs).
 
 Downstream Kubernetes manifests should reference pinned SHA tags in
 prod and `latest` only in dev — this is enforced by `conftest` policies
-in the [`docker-apps`](../docker-apps) repo.
+in the [`docker-apps`](https://github.com/tnoff/docker-apps) repo.
 
 ### Pre-commit + actionlint are the gate
 
