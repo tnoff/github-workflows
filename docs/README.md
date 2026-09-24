@@ -58,35 +58,7 @@ jobs:
       oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `image_name` | ✅ | - | Name of the Docker image |
-| `dockerfile_path` | ❌ | `./Dockerfile` | Path to Dockerfile |
-| `docker_context` | ❌ | `.` | Docker build context |
-| `platforms` | ❌ | `linux/amd64,linux/arm64` | Platforms to build |
-| `version_file` | ❌ | `./VERSION` | Path to VERSION file |
-| `tag_version` | ❌ | `false` | Tag image with version from VERSION file and `latest` (default: only commit SHA) |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-| `build_args` | ❌ | `''` | Docker build arguments (newline-separated `KEY=VALUE` pairs) |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `oci_registry` | ✅ | OCI Registry URL (e.g., `iad.ocir.io`) |
-| `oci_username` | ✅ | OCI Username |
-| `oci_token` | ✅ | OCI Auth Token |
-| `oci_namespace` | ✅ | OCIR Namespace |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `version` | Version read from VERSION file |
-| `image_tags` | Comma-separated list of tag names (e.g., `0.0.4,abc1234,latest`) |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/ocir-push.md`](docs/workflows/ocir-push.md)
 
 **Permissions:**
 
@@ -110,19 +82,7 @@ jobs:
       platform: linux/arm64
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `context` | ❌ | `.` | Build context directory |
-| `dockerfile` | ❌ | `Dockerfile` | Path to the Dockerfile, relative to the repo root |
-| `build_args` | ❌ | `''` | Newline-separated build args (`KEY=value` per line) |
-| `platform` | ❌ | `linux/arm64` | Target platform. Defaults to match the cluster; paired with an arm64 runner this is a native build, no QEMU |
-| `cache` | ❌ | `true` | Use the GitHub Actions layer cache |
-| `scan_image` | ❌ | `true` | Scan the built image for secrets |
-| `trufflehog_extra_args` | ❌ | `--only-verified` | Extra flags for the image scan. Do not pass `--fail`; the invocation already sets it and trufflehog rejects a repeated flag |
-| `runner_labels` | ❌ | `["ubuntu-24.04-arm"]` | Runner labels as JSON array. `ubuntu-24.04-arm` is free for public repos and builds `linux/arm64` natively |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run this workflow |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/docker-build-check.md`](docs/workflows/docker-build-check.md)
 
 **Permissions:**
 
@@ -152,35 +112,7 @@ jobs:
       oci_token: ${{ secrets.OCI_TOKEN }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `context` | ❌ | `.` | Build context directory |
-| `dockerfile` | ❌ | `Dockerfile` | Path to the Dockerfile, relative to the repo root |
-| `build_args` | ❌ | `''` | Newline-separated build args (`KEY=value` per line) |
-| `platform` | ❌ | `linux/arm64` | Target platform |
-| `tag_override` | ❌ | `''` | When set, tags are `<override>` and `<override>-<short sha>` instead of `latest` and `<short sha>`. Used by producers that publish variants |
-| `cache` | ❌ | `true` | Use the GitHub Actions layer cache |
-| `runner_labels` | ❌ | `["ubuntu-24.04-arm"]` | Runner labels as JSON array |
-| `registry` | ✅ | - | OCIR registry host, e.g. `iad.ocir.io` |
-| `namespace` | ✅ | - | OCI object storage namespace |
-| `repo_name` | ✅ | - | Repository name within the namespace |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `oci_username` | ✅ | OCIR username, `<namespace>/<user>` |
-| `oci_token` | ✅ | OCIR auth token |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `image` | Full image reference without a tag |
-| `primary_tag` | The moving tag (`latest`, or `tag_override`) |
-| `secondary_tag` | The immutable per-commit tag |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/docker-push.md`](docs/workflows/docker-push.md)
 
 **Permissions:**
 
@@ -233,31 +165,7 @@ jobs:
       tag_created: ${{ needs.tag.outputs.tag_created }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `version_file` | ❌ | `VERSION` | Path to version file |
-| `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
-| `version_json_key` | ❌ | `version` | Key to extract when `version_file_type` is `json` |
-| `gate_on_fragments` | ❌ | `false` | Set `true` on repos wired for `assemble-changelog.yml`. While changelog fragments are still pending, the job defers (`tag_created=false`) so `assemble-changelog.yml` folds and pushes first; that push fires a follow-up run where the fragment directory is empty, the gate passes, and tag/release run against the assembled changelog |
-| `changelog_dir` | ❌ | `changelog.d` | Directory of unassembled fragments; only read when `gate_on_fragments` is `true` |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `app_client_id` | ✅ | Client ID of the `tnoff-ci` GitHub App (`CI_APP_CLIENT_ID`) |
-| `app_private_key` | ✅ | Private key PEM of the `tnoff-ci` GitHub App (`CI_APP_PRIVATE_KEY`) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `version` | The tag, with a leading `v` (empty when deferred by `gate_on_fragments`) |
-| `tag_created` | `true` if a new tag was pushed, `false` if skipped or deferred |
-| `tag_exists` | `true` if tag already existed, `false` if new |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/tag.md`](docs/workflows/tag.md)
 
 **Permissions:**
 
@@ -282,14 +190,7 @@ jobs:
       tag_created: ${{ needs.tag.outputs.tag_created }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `version` | ✅ | - | Tag to release, with leading `v` (from the tag workflow) |
-| `tag_created` | ✅ | - | Whether the tag workflow actually created a tag |
-| `changelog_file` | ❌ | `CHANGELOG.md` | Path to the assembled changelog |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/release.md`](docs/workflows/release.md)
 
 **Permissions:**
 
@@ -318,29 +219,7 @@ jobs:
       app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `version_file` | ❌ | `VERSION` | Path to the version file |
-| `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
-| `version_json_key` | ❌ | `version` | Key holding the version when `version_file_type` is `json` |
-| `changelog_dir` | ❌ | `changelog.d` | Directory holding unassembled fragments |
-| `changelog_file` | ❌ | `CHANGELOG.md` | Path to the assembled changelog |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `app_client_id` | ✅ | Client ID of the `tnoff-ci` GitHub App (`CI_APP_CLIENT_ID`) |
-| `app_private_key` | ✅ | Private key PEM of the `tnoff-ci` GitHub App (`CI_APP_PRIVATE_KEY`) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `assembled` | `true` if a fold commit was pushed, `false` if there were no fragments |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/assemble-changelog.md`](docs/workflows/assemble-changelog.md)
 
 **Permissions:**
 
@@ -364,34 +243,7 @@ jobs:
       app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `paths` | ❌ | `[]` | JSON array of glob patterns; at least one changed file must match to trigger a bump (e.g., `["src/**", "package.json"]`). Empty array means always run. |
-| `bump_type` | ❌ | `patch` | Semver level to increment: `major`, `minor`, or `patch` |
-| `version_file` | ❌ | `VERSION` | Path to version file |
-| `version_file_type` | ❌ | `plain` | File type: `plain` (raw text) or `json` |
-| `version_json_key` | ❌ | `version` | Key to update when `version_file_type` is `json` |
-| `bump_changelog` | ❌ | `false` | Write a changelog *fragment* for this change under `changelog_dir`, folded in later by `assemble-changelog.yml` |
-| `changelog_dir` | ❌ | `changelog.d` | Directory holding unassembled changelog fragments |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `false` | Allow fork PRs to run — must be `false` since the workflow pushes to the PR branch |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `app_client_id` | ✅ | Client ID of the `tnoff-ci` GitHub App (`CI_APP_CLIENT_ID`) |
-| `app_private_key` | ✅ | Private key PEM of the `tnoff-ci` GitHub App (`CI_APP_PRIVATE_KEY`) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `old_version` | Version read from the file before the bump |
-| `new_version` | Version after the bump (same as `old_version` if skipped) |
-| `version_bumped` | `true` if a bump commit was pushed, `false` if skipped |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/bump-version.md`](docs/workflows/bump-version.md)
 
 > **Note:** When the `paths` filter is set and no changed files match, the `bump` job is skipped entirely and all outputs will be empty strings. Callers that consume these outputs should guard against empty values.
 
@@ -427,23 +279,7 @@ jobs:
       app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `bump_source` | ✅ | - | Identifier for this producer. Maps to an image name and pin files on the receiving side -- a contract with docker-apps' `bump-image-pin.yml`, not a free-form label |
-| `image` | ✅ | - | Full image reference without a tag. Recorded in the dispatch payload and the log line; NOT used to decide what gets rewritten |
-| `image_tag` | ✅ | - | Tag to pin to, normally the short commit SHA |
-| `target_repo` | ❌ | `tnoff/docker-apps` | `owner/repo` of the GitOps repository to dispatch to |
-| `fail_on_error` | ❌ | `false` | Whether a failed dispatch fails this workflow. Defaults false: the image is already pushed, so a downstream automation hiccup should not retroactively fail the producer |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `app_client_id` | ✅ | Client ID of the `tnoff-ci` GitHub App |
-| `app_private_key` | ✅ | Private key PEM of the `tnoff-ci` GitHub App. Needs `Contents: write` on the TARGET repo, and must be installed on the target as well as on this producer |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/trigger-bump-dispatch.md`](docs/workflows/trigger-bump-dispatch.md)
 
 **Permissions:**
 
@@ -482,24 +318,7 @@ jobs:
       oci_namespace: ${{ secrets.OCI_NAMESPACE }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `required_labels` | ❌ | `build-docker` | Comma-separated labels (e.g., `build-docker,deploy`) |
-| `require_all_labels` | ❌ | `false` | If true, PR must have ALL labels. If false, ANY label works. |
-| `require_merged` | ❌ | `true` | If true, PR must be merged. If false, just check labels. |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `conditions_met` | `true` if all conditions are met, `false` otherwise |
-| `pr_merged` | `true` if PR was merged |
-| `has_required_labels` | `true` if PR has required labels |
-| `pr_labels` | Comma-separated list of all PR labels |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/check-pr-labels.md`](docs/workflows/check-pr-labels.md)
 
 **Permissions:**
 
@@ -541,26 +360,9 @@ jobs:
 
 The notification includes repository, branch, workflow name, actor, commit SHA, and a direct link to the failed run. An optional `message` input can add extra context.
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `message` | ❌ | `''` | Additional context to include in the notification |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `source_repo` | ❌ | `''` | `owner/repo` of the run being reported. Defaults to the calling repo |
-| `source_run_url` | ❌ | `''` | URL of the run being reported. Defaults to the calling run |
-| `source_workflow` | ❌ | `''` | Name of the workflow being reported. Defaults to the calling workflow |
-| `source_branch` | ❌ | `''` | Branch of the run being reported. Defaults to the calling ref |
-| `source_actor` | ❌ | `''` | Actor who triggered the run being reported. Defaults to the calling actor |
-| `source_sha` | ❌ | `''` | Commit SHA of the run being reported. Defaults to the calling SHA |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/discord-notify.md`](docs/workflows/discord-notify.md)
 
 The `source_*` overrides exist because a reusable workflow runs **inside the caller's run**: `github.run_id`, `github.workflow` and `github.repository` all describe the caller. That is right when a job reports its own failure, and wrong when a workflow reports on a run that already finished — every field would name the reporter. `notify-failure.yml` and `startup-failure-sweep.yml` both set them.
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `discord_webhook_url` | ✅ | Discord webhook URL |
 
 **Permissions:**
 
@@ -592,24 +394,7 @@ jobs:
       techdocs_s3_region: ${{ secrets.TECHDOCS_S3_REGION }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `entity_ref` | ✅ | | Backstage entity uid, `namespace/Kind/name` (case-sensitive), e.g. `default/Component/my-service` |
-| `legacy_copy_readme_to_index` | ❌ | `false` | Passes `--legacyCopyReadmeMdToIndexMd` to `techdocs-cli generate`, copying `docs/README.md` to `docs/index.md` before building. Defaults off because it's actively harmful when `docs/README.md` already exists: mkdocs treats the resulting pair as a conflict and drops `README.md` from the build, breaking every link that points at it (including a nav entry). mkdocs already falls back to `README.md` as the homepage on its own when no `index.md` exists -- only turn this on for a `docs/` with neither file. |
-| `techdocs_cli_version` | ❌ | `1.12.0` | Pinned `@techdocs/cli` version |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `techdocs_s3_access_key_id` | ✅ | Access key for a bucket-scoped identity with write access to the TechDocs bucket |
-| `techdocs_s3_secret_access_key` | ✅ | Secret key for the same identity |
-| `techdocs_s3_bucket_name` | ✅ | Target bucket name |
-| `techdocs_s3_endpoint` | ✅ | S3-compatible endpoint URL (e.g. an OCI Object Storage endpoint) |
-| `techdocs_s3_region` | ✅ | Region used for SigV4 signing against the endpoint above |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/techdocs-publish.md`](docs/workflows/techdocs-publish.md)
 
 **Permissions:**
 
@@ -635,26 +420,7 @@ jobs:
       install_command: pip install -e ".[dev]"
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `coverage_source` | ✅ | - | Space-separated `--cov=` arguments (e.g. `src/mypackage` or `"src/pkg1 src/pkg2"`) |
-| `python_version` | ❌ | `3.x` | Python version |
-| `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
-| `install_command` | ❌ | `pip install pytest pytest-cov` | Dependency install command |
-| `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
-| `working_directory` | ❌ | `.` | Directory to run commands in |
-| `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-check.yml`) |
-| `artifact_retention_days` | ❌ | `400` | Days to retain the artifact |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `coverage_percent` | Total coverage percentage (e.g. `87.42`) |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/coverage-store.md`](docs/workflows/coverage-store.md)
 
 **Permissions:**
 
@@ -685,29 +451,7 @@ jobs:
       install_command: pip install -e ".[dev]" diff-cover
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `coverage_source` | ✅ | - | Space-separated `--cov=` arguments (e.g. `src/mypackage` or `"src/pkg1 src/pkg2"`) |
-| `python_version` | ❌ | `3.x` | Python version |
-| `pre_install_command` | ❌ | `''` | Command to run before pip install (e.g. `sudo apt-get install -y libpq-dev`) |
-| `install_command` | ❌ | `pip install pytest pytest-cov diff-cover` | Dependency install command (include `diff-cover`) |
-| `pytest_args` | ❌ | `''` | Extra pytest arguments (no `--cov`/`--cov-report` flags) |
-| `working_directory` | ❌ | `.` | Directory to run commands in |
-| `artifact_name` | ❌ | `pytest-coverage-baseline` | Artifact name (must match `coverage-store.yml`) |
-| `fail_on_missing_baseline` | ❌ | `false` | Fail if no baseline artifact is found on main yet |
-| `fail_on_diff_cover` | ❌ | `true` | Fail if diff-cover reports less than 100% coverage on changed lines |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `coverage_percent` | Current total coverage percentage |
-| `baseline_percent` | Baseline coverage percentage from main branch |
-| `coverage_passed` | `true` if coverage did not drop below baseline |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/coverage-check.md`](docs/workflows/coverage-check.md)
 
 **Permissions:**
 
@@ -743,24 +487,7 @@ jobs:
       extra_apt: 'sqlite3 ffmpeg'
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `extra_apt` | ❌ | `''` | Space-separated apt packages needed by the test suite (e.g. `sqlite3 ffmpeg`) |
-| `pre_commands` | ❌ | `''` | Shell run after `extra_apt` and before tox, in each matrix leg -- for a test suite that needs a running service rather than just a package. Free-form rather than a boolean flag, since a reusable workflow can't attach a service container conditionally |
-| `diff_cover_fail_under` | ❌ | `100` | Coverage threshold for changed lines, percent |
-| `diff_cover_compare_branch` | ❌ | `''` | Branch to diff against. Empty (default) uses the pull request's own base branch |
-| `discover_python_version` | ❌ | `3.x` | Python used to run `tox -l` in the discover job |
-| `cache_tox` | ❌ | `true` | Cache the `.tox` virtualenvs between runs |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `python_versions` | JSON array of Python versions discovered from `tox.ini` |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/tox.md`](docs/workflows/tox.md)
 
 **Permissions:**
 
@@ -779,15 +506,7 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@v1
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `python_version` | ❌ | `3.13` | Python used to run pre-commit itself, not the hooks |
-| `extra_packages` | ❌ | `''` | Space-separated pip packages installed alongside pre-commit, for hooks that import them |
-| `all_files` | ❌ | `true` | `true` runs `pre-commit run --all-files`. Set `false` to run only the files a pull request changes (ignored outside a `pull_request` event, which falls back to `--all-files`) |
-| `fetch_depth` | ❌ | `0` | Checkout depth. Defaults to full history on purpose -- a shallow clone doesn't make a history-reading hook fail, it makes it quietly wrong (e.g. `git log -1 --format=%ad -- <file>` returns the shallow boundary commit's date). Set `1` only once you've checked no hook reads git history |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/pre-commit.md`](docs/workflows/pre-commit.md)
 
 **Permissions:**
 
@@ -806,15 +525,7 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/trufflehog.yml@v1
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-| `extra_args` | ❌ | `--only-verified` | Extra flags appended to the trufflehog invocation. Do not pass `--fail`; the action already runs with `--fail --no-update --github-actions` and trufflehog rejects a repeated flag |
-| `exclude_paths` | ❌ | `''` | Path to a file of newline-separated regex path excludes, relative to the repo root. Empty excludes nothing |
-| `full_history` | ❌ | `false` | Force a full-history scan even on a `pull_request` event |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/trufflehog.md`](docs/workflows/trufflehog.md)
 
 **Permissions:**
 
@@ -833,15 +544,7 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/spellcheck.yml@v1
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `name` | ❌ | `Markdown` | `pyspelling --name` (the matrix entry in the config) |
-| `config` | ❌ | `.spellcheck/spellcheck.yml` | Path to the pyspelling config |
-| `aspell_packages` | ❌ | `aspell aspell-en` | apt packages providing the dictionaries pyspelling needs |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/spellcheck.md`](docs/workflows/spellcheck.md)
 
 **Permissions:**
 
@@ -870,21 +573,7 @@ jobs:
       app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `log_level` | ❌ | `info` | Renovate `LOG_LEVEL` (`debug` when diagnosing a run) |
-| `allowed_commands` | ❌ | `["^bash ci/renovate-terraform-docs\\.sh$"]` | JSON array of regexes allowlisting repo-level `postUpgradeTasks` commands. A repo's own `renovate.json` cannot authorize its own commands -- the allowlist has to live in this self-hosted config |
-| `timeout_minutes` | ❌ | `30` | Backstop, not a budget, for a wedged run. Renovate itself finishes in 1.5-12 min across these repos |
-
-**Secrets:**
-
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `app_client_id` | ✅ | Client ID of the `tnoff-ci` GitHub App (`CI_APP_CLIENT_ID`) |
-| `app_private_key` | ✅ | Private key PEM of the `tnoff-ci` GitHub App (`CI_APP_PRIVATE_KEY`) |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/renovate.md`](docs/workflows/renovate.md)
 
 **Permissions:**
 
@@ -905,14 +594,7 @@ jobs:
       dry_run: false
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `branch_pattern` | ❌ | `^(bump\|renovate)/` | Extended regex of branch names eligible for deletion |
-| `age_days` | ❌ | `30` | Minimum age in days (by last commit) before a branch is eligible |
-| `dry_run` | ❌ | `true` | Log candidates without deleting |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/branch-cleanup.md`](docs/workflows/branch-cleanup.md)
 
 **Permissions:**
 
@@ -931,19 +613,7 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/check-action-pins.yml@v1
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `workflow_dir` | ❌ | `.github/workflows` | Directory to scan |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `violations_found` | `true` if any unpinned actions were detected |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/check-action-pins.md`](docs/workflows/check-action-pins.md)
 
 **Permissions:**
 
@@ -964,19 +634,7 @@ jobs:
     uses: tnoff/github-workflows/.github/workflows/check-workflow-contracts.yml@v1
 ```
 
-**Inputs:**
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `workflow_dir` | ❌ | `.github/workflows` | Directory to scan |
-| `runner_labels` | ❌ | `["ubuntu-24.04"]` | Runner labels as JSON array |
-| `allow_fork_prs` | ❌ | `true` | Allow fork PRs to run (set `false` for self-hosted runners) |
-
-**Outputs:**
-
-| Output | Description |
-|--------|-------------|
-| `violations_found` | `true` if any contract mismatch was detected |
+**Reference:** full `inputs`/`secrets`/`outputs` documentation, generated from this workflow's `on.workflow_call` block: [`docs/workflows/check-workflow-contracts.md`](docs/workflows/check-workflow-contracts.md)
 
 **Permissions:**
 

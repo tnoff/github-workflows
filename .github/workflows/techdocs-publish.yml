@@ -72,14 +72,19 @@ on:
         default: '["ubuntu-24.04"]'
     secrets:
       techdocs_s3_access_key_id:
+        description: 'Access key for a bucket-scoped identity with write access to the TechDocs bucket'
         required: true
       techdocs_s3_secret_access_key:
+        description: 'Secret key for the same identity'
         required: true
       techdocs_s3_bucket_name:
+        description: 'Target bucket name'
         required: true
       techdocs_s3_endpoint:
+        description: 'S3-compatible endpoint URL (e.g. an OCI Object Storage endpoint)'
         required: true
       techdocs_s3_region:
+        description: 'Region used for SigV4 signing against the endpoint above'
         required: true
 
 jobs:

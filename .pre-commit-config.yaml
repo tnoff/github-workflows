@@ -38,3 +38,15 @@ repos:
         entry: '^\s+(-\s+)?uses:\s+\S+@(?![a-f0-9]{40}([^a-f0-9]|$))'
         files: '\.github/workflows/.*\.ya?ml$'
         types: [yaml]
+
+  # Regenerate the per-workflow reference docs (docs/workflows/*.md) from
+  # each reusable workflow's own on.workflow_call block, via actdocs.
+  # Requires Docker running locally -- see DEVELOPMENT.md.
+  - repo: local
+    hooks:
+      - id: generate-workflow-docs
+        name: Generate reusable-workflow reference docs
+        language: system
+        entry: .pre-commit-scripts/generate-workflow-docs.sh
+        pass_filenames: false
+        files: '\.github/workflows/.*\.ya?ml$|^docs/workflows/'
