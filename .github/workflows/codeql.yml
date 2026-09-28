@@ -1,0 +1,80 @@
+name: CodeQL
+
+# Reusable workflow: GitHub's semantic SAST (dataflow/taint analysis across
+# function and file boundaries), distinct from everything else in this
+# fleet's security tooling. Checkov flags Terraform resource misconfigurations;
+# bandit flags dangerous-looking Python API calls in isolation. Neither traces
+# how untrusted data actually moves through the code -- CodeQL is the one tool
+# here that can catch an injection spanning multiple functions, not just a
+# single suspicious line.
+#
+# First consumer: backstage (Node/TypeScript), the one repo in the fleet with
+# zero SAST of any kind -- every Python repo already has bandit via tox.
+#
+# Uploads results to the calling repo's own code-scanning alerts (the Security
+# tab), which is what needs security-events: write below. Free for public
+# repos; private repos need GitHub Advanced Security for the upload step to
+# work at all, so check that before pointing this at a private one.
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     codeql:
+#       uses: tnoff/github-workflows/.github/workflows/codeql.yml@<sha>
+#       with:
+#         languages: '["javascript-typescript"]'
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: >-
+          CodeQL language identifiers as a JSON array (e.g.
+          ["javascript-typescript"]). One CodeQL language can cover several
+          real languages -- javascript-typescript analyzes both.
+        required: true
+        type: string
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      allow_fork_prs:
+        description: 'Allow fork PRs to run this workflow'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    if: >-
+      inputs.allow_fork_prs ||
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJson(inputs.languages) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@88585263c0627ee42c0e1c5143a112c8d6f4aa18  # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+
+      # No explicit build step. javascript-typescript is one of CodeQL's
+      # interpreted-language extractors -- it parses source directly and
+      # needs no compiled artifact, unlike autobuild's default behaviour for
+      # compiled languages (Java, C++, Go, ...), where skipping this would
+      # mean analyzing nothing.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@88585263c0627ee42c0e1c5143a112c8d6f4aa18  # v4.38.2
+        with:
+          category: "/language:${{ matrix.language }}"
