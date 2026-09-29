@@ -29,6 +29,14 @@ name: Docker push
 # native build rather than a QEMU cross-build, and arm64 runners are free for
 # public repos.
 #
+# Scans the pushed image for secrets, closing a real gap: docker-build-check.yml
+# scans every PR's build before merge, but nothing ever scanned the image this
+# workflow actually ships -- the two builds can differ (this one can carry
+# different build_args than the PR check), so a secret introduced only here
+# would reach the registry with no check at all. Runs against the same
+# single-platform build the push already produced (load: true below), not a
+# second build, so it costs one extra step, not one extra build.
+#
 on:
   workflow_call:
     inputs:
@@ -75,6 +83,18 @@ on:
         required: false
         type: boolean
         default: true
+      scan_image:
+        description: 'Scan the pushed image for secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_extra_args:
+        description: >-
+          Extra flags for the image scan. Do NOT pass --fail; the invocation
+          below already sets it and trufflehog rejects a repeated flag.
+        required: false
+        type: string
+        default: '--only-verified'
       runner_labels:
         description: 'Runner labels as JSON array'
         required: false
@@ -191,6 +211,13 @@ jobs:
       # hit before with identical digests. The list itself is computed in the
       # resolve step above (steps.refs.outputs.tags), not inlined here, so
       # single_tag only has to be branched on once.
+      # load: true is safe here specifically because this workflow only ever
+      # builds ONE platform (inputs.platform is a single value, not a list) --
+      # a multi-platform result is a manifest list, which can't be loaded into
+      # the local daemon at all. Puts the just-pushed image in the local
+      # daemon too, so the scan step below reads the real pushed artifact
+      # without a second build or a registry pull (and without needing its
+      # own OCIR auth -- it never leaves the runner's local daemon).
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -199,6 +226,33 @@ jobs:
           platforms: ${{ inputs.platform }}
           build-args: ${{ inputs.build_args }}
           push: true
+          load: true
           tags: ${{ steps.refs.outputs.tags }}
           cache-from: ${{ inputs.cache && 'type=gha' || '' }}
           cache-to: ${{ inputs.cache && 'type=gha,mode=min' || '' }}
+
+      # Same technique and the same belt-and-braces zero-byte guard as
+      # docker-build-check.yml's secret scan -- see that workflow for why the
+      # docker:// prefix and the byte-count assertion are both load-bearing.
+      - name: Scan pushed image for secrets
+        if: inputs.scan_image
+        env:
+          EXTRA_ARGS: ${{ inputs.trufflehog_extra_args }}
+          IMAGE: ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.primary_tag }}
+        run: |
+          set -euo pipefail
+          LOG=$(mktemp)
+          # EXTRA_ARGS is intentionally unquoted: it is a flag list, not one arg.
+          # shellcheck disable=SC2086
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            ghcr.io/trufflesecurity/trufflehog:latest \
+            docker --image "docker://${IMAGE}" --fail --no-update ${EXTRA_ARGS} \
+            2>&1 | tee "${LOG}"
+
+          BYTES=$(grep -o '"bytes": *[0-9]*' "${LOG}" | tail -1 | tr -dc '0-9')
+          if [ -z "${BYTES}" ] || [ "${BYTES}" -eq 0 ]; then
+            echo "::error::trufflehog scanned 0 bytes -- the image was not read, so this scan proves nothing."
+            exit 1
+          fi
+          echo "scanned ${BYTES} bytes"

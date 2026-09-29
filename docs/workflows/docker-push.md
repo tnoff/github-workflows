@@ -16,8 +16,10 @@
 | registry | OCIR registry host, e.g. iad.ocir.io | `string` | n/a | yes |
 | repo_name | Repository name within the namespace | `string` | n/a | yes |
 | runner_labels | Runner labels as JSON array | `string` | `["ubuntu-24.04-arm"]` | no |
+| scan_image | Scan the pushed image for secrets | `boolean` | `true` | no |
 | single_tag | Push only the primary tag, no immutable per-commit second tag. Default false preserves today's behavior for every existing consumer. For producers where nothing ever pulls a specific past build -- a laptop-rebuilt dev tool, not a deployed workload -- an unbounded per-merge tag is pure accumulation with no consumer, and `secondary_tag` comes back empty rather than computed-but-unused. | `boolean` | `false` | no |
 | tag_override | When set, tags are <override> and <override>-<short sha> instead of `latest` and <short sha>. Used by producers that publish variants. | `string` | `` | no |
+| trufflehog_extra_args | Extra flags for the image scan. Do NOT pass --fail; the invocation below already sets it and trufflehog rejects a repeated flag. | `string` | `--only-verified` | no |
 
 ## Secrets
 
