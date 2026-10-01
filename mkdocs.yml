@@ -6,6 +6,8 @@ nav:
   - Development: DEVELOPMENT.md
   - Agents/Conventions: AGENTS.md
   - Contributing: CONTRIBUTING.md
+  - CI templates: ci-templates.md
+  - Branch cleanup runbook: branch-cleanup-runbook.md
 
 plugins:
   - techdocs-core
