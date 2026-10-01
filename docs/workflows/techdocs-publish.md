@@ -10,6 +10,7 @@
 | entity_ref | Backstage entity uid, namespace/Kind/name (case-sensitive). Example: default/Component/terraform-modules. Passed straight to `techdocs-cli publish --entity`. | `string` | n/a | yes |
 | legacy_copy_readme_to_index | Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`, which copies docs/README.md to docs/index.md before building. Defaults false because it is actively harmful whenever docs/README.md already exists: mkdocs treats the resulting index.md/README.md pair as a conflict and silently drops README.md from the build, which leaves every link that points at README.md -- including a mkdocs.yml nav entry -- pointing at a page that was never published. mkdocs already falls back to README.md as the implicit homepage on its own when no index.md exists at all, so this flag is only for the genuinely rare case of a docs/ with neither index.md nor README.md. | `boolean` | `false` | no |
 | runner_labels | Runner labels as JSON array (e.g., ["self-hosted", "oke"]) | `string` | `["ubuntu-24.04"]` | no |
+| source_dir | Directory containing the mkdocs.yml to build, relative to the repo root. Passed to `techdocs-cli generate --source-dir`. Defaults to the repo root. Set it when one repo hosts several TechDocs sites (one per entity, each with its own mkdocs.yml), and call this workflow once per site with a matching entity_ref. | `string` | `.` | no |
 | techdocs_cli_version | Pinned @techdocs/cli version, passed to npx as @techdocs/cli@<version> | `string` | `1.12.0` | no |
 
 ## Secrets

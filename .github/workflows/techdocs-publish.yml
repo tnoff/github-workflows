@@ -44,6 +44,16 @@ on:
           `techdocs-cli publish --entity`.
         required: true
         type: string
+      source_dir:
+        description: >-
+          Directory containing the mkdocs.yml to build, relative to the repo
+          root. Passed to `techdocs-cli generate --source-dir`. Defaults to
+          the repo root. Set it when one repo hosts several TechDocs sites
+          (one per entity, each with its own mkdocs.yml), and call this
+          workflow once per site with a matching entity_ref.
+        required: false
+        type: string
+        default: '.'
       legacy_copy_readme_to_index:
         description: >-
           Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`, which
@@ -101,12 +111,13 @@ jobs:
         env:
           CLI_VERSION: ${{ inputs.techdocs_cli_version }}
           LEGACY_COPY: ${{ inputs.legacy_copy_readme_to_index }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
         run: |
           set -euo pipefail
           if [ "${LEGACY_COPY}" = "true" ]; then
-            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --legacyCopyReadmeMdToIndexMd
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}" --legacyCopyReadmeMdToIndexMd
           else
-            npx --yes "@techdocs/cli@${CLI_VERSION}" generate
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}"
           fi
 
       - name: Publish docs
