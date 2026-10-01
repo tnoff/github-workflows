@@ -87,6 +87,28 @@ jobs:
       tag_created: ${{ needs.tag.outputs.tag_created }}
 ```
 
+## Changelog fragments and versions
+
+`bump-version` (with `bump_changelog: true`) writes a `changelog.d/` fragment on
+a PR; `assemble-changelog` folds the fragments into `CHANGELOG.md` on `main`;
+`tag` (with `gate_on_fragments: true`) defers until the fold has run.
+
+- **A fragment needs a `VERSION` bump in the same PR.** Folding files the
+  fragments under the version in `VERSION`. If that version already has a
+  `## [X]` section, `assemble-changelog` fails the job rather than append a
+  second one: `tag` would find the tag present and skip, `release` would skip
+  with it, and every job would stay green while the change ships under the
+  next tag with notes filed under the old one. It fails instead of
+  auto-bumping because choosing the next version is the author's call.
+- A fold push that fails and is re-run after
+  another PR bumped `VERSION` files the still-pending fragments under the newer
+  version, leaving a gap in the headings (for example 2.5.78 then 2.5.80, no
+  `v2.5.79`). No content is lost, and images are tagged by commit SHA, so
+  nothing dangles. Compare the `## [` headings with `git tag` to spot it.
+- Renovate PRs only cut a release when their branch starts with `renovate/dev-`
+  (see [Renovate presets](#renovate-presets)); consumers gate `bump-version` on
+  that prefix.
+
 ## Image bump contract
 
 A producer repo's `docker-push` followed by `trigger-bump-dispatch` fires a
@@ -165,6 +187,58 @@ Renovate, read one dry run's log, then set `dry_run: false`:
 The default `GITHUB_TOKEN` is enough (`contents: write`, `pull-requests: read`
 are set inside the workflow).
 
+## Renovate presets
+
+`renovate/*.json` are shared presets, extended from a consumer's `renovate.json`
+as `github>tnoff/github-workflows//renovate/<name>`. They carry **no ref**, so
+Renovate resolves them from `main` at run time: a preset edit is live for every
+consumer on its next run, unlike a workflow edit, which waits for the SHA pin to
+move.
+
+| Preset | Use |
+|---|---|
+| `default-github` | Fleet defaults, including the `tnoff/github-workflows` pin tracker. A bare-SHA `uses:` gets no updates from the built-in `github-actions` manager, so the regex manager here is what keeps those pins moving |
+| `python` | Python repos: branch prefixes, grouping |
+| `no-automerge` | Extend **last** in repos without a ruleset (private, no required checks). A top-level `"automerge": false` loses to the more specific preset `packageRules`, so it has to be a catch-all rule listed after them |
+| `default` | Legacy GitLab-era preset, kept for repos not yet moved |
+
+Rules that are not visible from the JSON:
+
+- **The branch prefix decides whether an update releases.** `python.json` puts
+  every `pep621`/`dockerfile` update under `dev-` (consumers run `bump-version`
+  only for `renovate/dev-*`, which bumps `VERSION`, writes a fragment and cuts a
+  release) and test, lint and build tooling under `test-`, which never releases.
+  A test dependency that falls through the list is released as a runtime change,
+  so match tooling by glob (`pytest-*`, `tox-*`, `types-*`) and list the `test-`
+  rule **last**: `additionalBranchPrefix` is replaced by a later matching rule,
+  not concatenated.
+- `prHourlyLimit` and `prConcurrentLimit` are `0` on purpose.
+  `config:recommended` caps at 2 per hour and 10 open, and the perennial
+  workflow-pin PR takes one slot, so a repo with a backlog silently never
+  reached the deps at the end of the queue (yt-dlp sat unbumped for weeks).
+- To see what Renovate would name or group an update, run
+  `RENOVATE_PLATFORM=local RENOVATE_DRY_RUN=full LOG_LEVEL=debug npx renovate`
+  in a checkout: no token, no PRs. Judge grouping by the branch name, not the PR
+  title (a group is titled after its only member that run).
+
+## Tox repos
+
+`tox.yml` runs `tox -e pyXY` once per interpreter in the matrix, so every line
+in a shared `[testenv]` `commands` block runs once per Python. Gate static
+analysis to the newest interpreter with the factor prefix so it runs once
+(`pytest` still runs on every version):
+
+```ini
+[testenv]
+commands =
+    py314: pylint mypkg/
+    py314: bandit -r mypkg/
+    pytest --cov=mypkg tests/
+```
+
+`py314` is also the leg whose coverage `diff-cover` reads. Bump the prefix with
+the newest `env_list` entry.
+
 ## Workflows that are not callable
 
 | File | Purpose |
@@ -176,6 +250,23 @@ are set inside the workflow).
 
 Scheduled GitHub cron slots are frequently dropped, so "hourly" workflows
 are best-effort.
+
+### What reports a failure
+
+- The required `CI result` check guards **pull requests only**. Workflows that
+  run on `push` to `main` or on a schedule (`release`, applies) are outside it,
+  and their only reporter is `notify-failure.yml`.
+- `notify-failure.yml` fires for `failure` conclusions on non-PR events and
+  excludes its own name, so a broken notifier is silent. The sweep reports it.
+- A `startup_failure` run creates no job and no `workflow_run` event, so no
+  event-driven notifier can see it. Polling is the only mechanism; "nothing is
+  failing" and "nothing is reporting" are different claims.
+- The sweep's App token needs `Actions: read`. Public repos answer
+  `/actions/runs` to any token, so a missing permission shows up only on the
+  private repos, and the sweep fails hard naming it rather than skipping them.
+- Scheduled crons drop most slots (74% measured over 8 days), so the sweep's
+  lookback is 8 hours, wider than the worst observed gap, with a high-water
+  mark to suppress duplicates.
 
 ## Changing this repo
 
