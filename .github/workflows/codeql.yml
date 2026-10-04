@@ -20,7 +20,7 @@ name: CodeQL
 #
 #   jobs:
 #     codeql:
-#       uses: tnoff/github-workflows/.github/workflows/codeql.yml@<sha>
+#       uses: tnoff/github-workflows/.github/workflows/codeql.yml@<sha>  # codeql-vX.Y.Z
 #       with:
 #         languages: '["javascript-typescript"]'
 
