@@ -30,6 +30,22 @@ jobs:
     name: Scan for secrets
     uses: ./.github/workflows/trufflehog.yml
 
+  versions:
+    name: Workflow versions
+    # A changed reusable workflow must raise its versions/<name>.version, which
+    # is what self-release.yml tags on merge.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Check versions
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: .github/scripts/check-versions.sh "origin/${BASE_REF}"
+
   result:
     name: CI result
     # The stable name for the branch ruleset to require.
@@ -42,7 +58,7 @@ jobs:
     #
     # This job always runs and its name never changes.
     if: always()
-    needs: [pre-commit, secrets]
+    needs: [pre-commit, secrets, versions]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -51,11 +67,13 @@ jobs:
         run: |
           echo "pre-commit: ${{ needs['pre-commit'].result }}"
           echo "secrets:    ${{ needs.secrets.result }}"
+          echo "versions:   ${{ needs.versions.result }}"
 
       - name: Fail if any job failed
         if: >-
           needs['pre-commit'].result == 'failure' || needs['pre-commit'].result == 'cancelled' ||
-          needs.secrets.result == 'failure' || needs.secrets.result == 'cancelled'
+          needs.secrets.result == 'failure' || needs.secrets.result == 'cancelled' ||
+          needs.versions.result == 'failure' || needs.versions.result == 'cancelled'
         run: |
           echo "::error::One or more CI jobs did not pass."
           exit 1
