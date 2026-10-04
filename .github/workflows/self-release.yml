@@ -64,8 +64,19 @@ jobs:
               echo "${tag} exists -- skipping"
               continue
             fi
+            # Notes list only commits that touched this workflow since its own
+            # previous release. --generate-notes would list every PR since the
+            # last tag of ANY workflow, which is mostly other workflows' changes.
+            prev=$(git tag --list "${name}-v*" --sort=-v:refname | head -n 1)
+            notes=$(mktemp)
+            if [ -n "${prev}" ]; then
+              git log --format='- %s (%h)' "${prev}..HEAD" -- ".github/workflows/${name}.yml" > "${notes}"
+            fi
+            if [ ! -s "${notes}" ]; then
+              echo "Release of \`${name}.yml\`." > "${notes}"
+            fi
             git tag "${tag}"
             git push origin "${tag}"
-            gh release create "${tag}" --verify-tag --title "${tag}" --generate-notes
+            gh release create "${tag}" --verify-tag --title "${tag}" --notes-file "${notes}"
             echo "Released ${tag}"
           done
