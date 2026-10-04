@@ -25,8 +25,9 @@ reintroduce a GitLab CI surface.
 
 ### Consumers pin by commit SHA -- preserve backwards compatibility
 
-Consumers pin a full SHA (Renovate bumps it); there are no floating major
-tags, only `v0.0.N` release tags. Any change that alters the inputs, secrets,
+Consumers pin a full SHA plus a `# <workflow>-vX.Y.Z` comment (Renovate bumps
+both); there are no floating major tags, only per-workflow `<workflow>-vX.Y.Z`
+release tags cut by `self-release.yml`. Any change that alters the inputs, secrets,
 outputs, or behaviour of an existing workflow can break consumers as soon as
 their pin moves, and a caller/callee contract mismatch fails at startup with
 no visible check. So:
@@ -47,11 +48,16 @@ variant: it tags the commit SHA and, only with `tag_version`, the `VERSION`
 file value and `latest`. Downstream manifests in `docker-apps` pin by SHA;
 its `conftest` policy rejects `latest`.
 
-### VERSION file
+### Versions
 
-`VERSION` is the single source of truth for versions: `MAJOR.MINOR.PATCH`, no
-`v` prefix, no trailing whitespace. `bump-version.yml` increments it on PRs and
-`tag.yml` tags it (this repo's `self-tag.yml` does that for itself).
+There is no repo-wide `VERSION` file. Each reusable workflow has its own
+`versions/<name>.version` (`MAJOR.MINOR.PATCH`, no `v`, one line). A PR that
+changes `.github/workflows/<name>.yml` must raise that file -- patch for
+fixes, minor for additive inputs, major for breaking changes -- and
+`self-ci.yml` fails it otherwise. On merge `self-release.yml` tags
+`<name>-vX.Y.Z`. `bump-version.yml` and `tag.yml` stay in the library for
+consumer repos that keep their own `VERSION` file; this repo does not use
+them on itself.
 
 ### Pre-commit + actionlint are the gate
 

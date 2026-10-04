@@ -7,16 +7,18 @@ GitLab holds a read-only mirror that runs nothing.
 
 ## Using a workflow
 
-Call a workflow from a consumer repo and pin it to a full commit SHA (there
-are no floating `@v1` tags; Renovate keeps the SHA current):
+Call a workflow from a consumer repo and pin it to a full commit SHA, with a
+trailing comment naming that workflow's release tag (there are no floating
+`@v1` tags; Renovate reads the comment and moves the pin only when *that*
+workflow cuts a new release):
 
 ```yaml
 # .github/workflows/ci.yml in the consuming repo
 jobs:
   pre-commit:
-    uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@<40-char-sha>
+    uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@<40-char-sha>  # pre-commit-v1.0.0
   contracts:
-    uses: tnoff/github-workflows/.github/workflows/check-workflow-contracts.yml@<40-char-sha>
+    uses: tnoff/github-workflows/.github/workflows/check-workflow-contracts.yml@<40-char-sha>  # check-workflow-contracts-v1.0.0
 ```
 
 Add `check-workflow-contracts` to every repo that pins a workflow from here: an
