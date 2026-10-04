@@ -1,0 +1,70 @@
+name: Release workflows
+
+# Replaces self-tag.yml. Each reusable workflow is versioned independently and
+# tagged `<name>-vX.Y.Z`, so a change to one workflow no longer moves the
+# version (and the Renovate pin) of every other one. See
+# .github/scripts/release_workflows.py for how the bump level is chosen.
+#
+# Not part of the library: the `self-` prefix marks callers, not callees.
+#
+# Run the bootstrap once, from the Actions tab, to cut <name>-v1.0.0 for every
+# workflow. Until then a push to main releases nothing.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/*.yml'
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: 'Tag every workflow with no tag yet as <name>-v1.0.0 at HEAD (one-time)'
+        required: false
+        type: boolean
+        default: false
+
+# Serialise so two quick merges cannot race to the same tag.
+concurrency:
+  group: self-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release changed workflows
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # Same App token the tag workflow uses: the fleet's rulesets name the App
+      # as a bypass actor, and a tag pushed with the default GITHUB_TOKEN
+      # triggers no downstream run.
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ secrets.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          args=()
+          if [ "${BOOTSTRAP}" = "true" ]; then
+            args+=(--bootstrap)
+          fi
+          python3 .github/scripts/release_workflows.py "${args[@]}"

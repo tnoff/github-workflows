@@ -10,15 +10,26 @@ and the workflows that are not callable.
 
 ## Calling a workflow
 
-Consumers pin a **full commit SHA**, and Renovate (`github-actions` manager)
-moves the pin. There are no floating `@v1` / `@v0` tags -- only release tags
-`v0.0.N` (cut by `self-tag.yml` from `VERSION`).
+Consumers pin a **full commit SHA** with a trailing comment naming the
+workflow's release tag, and Renovate moves the pin (see
+`renovate/default-github.json`). There are no floating `@v1` / `@v0` tags.
+
+Every workflow is versioned **independently**: tags are `<workflow>-vX.Y.Z`
+(e.g. `docker-push-v1.3.0`), cut by `self-release.yml` when a commit touches
+that workflow's file. A change to `tox.yml` therefore bumps only `tox`, and
+only the repos that call `tox.yml` get a Renovate PR. The bump level comes
+from the commit messages: `type!:` or a `BREAKING CHANGE:` footer is major,
+`feat:` is minor, anything else is patch (see
+`.github/scripts/release_workflows.py`).
 
 ```yaml
 jobs:
   pre-commit:
-    uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@<40-char-sha>
+    uses: tnoff/github-workflows/.github/workflows/pre-commit.yml@<40-char-sha>  # pre-commit-v1.0.0
 ```
+
+A pin with no version comment still works but is tracked the old way, to the
+head of `main`, and so is bumped by every commit here. Add the comment.
 
 Rules that follow from SHA pinning:
 
@@ -246,7 +257,7 @@ the newest `env_list` entry.
 | `notify-failure.yml` | Per-repo `workflow_run` notifier template: Discord alert when any workflow on a non-PR event fails. Must exist on a repo's default branch to fire; each consumer carries its own copy |
 | `startup-failure-sweep.yml` | Hourly poll of every repo the `tnoff-ci` App can see for `startup_failure` runs and failed notifiers, which emit no event. Single instance, lives here |
 | `fleet-mirror.yml` | Hourly push of GitHub `main` to the frozen GitLab copies (read-only history); never force-pushes |
-| `self-ci.yml`, `self-scheduled.yml`, `self-tag.yml`, `self-techdocs-publish.yml` | This repo's own PR checks, weekly Renovate, tagging and TechDocs. They call the library through local `./` paths so a PR is tested with its own edits |
+| `self-ci.yml`, `self-scheduled.yml`, `self-release.yml`, `self-techdocs-publish.yml` | This repo's own PR checks, weekly Renovate, per-workflow releases and TechDocs. They call the library through local `./` paths so a PR is tested with its own edits |
 
 Scheduled GitHub cron slots are frequently dropped, so "hourly" workflows
 are best-effort.
