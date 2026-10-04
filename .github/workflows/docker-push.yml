@@ -56,7 +56,12 @@ on:
         type: string
         default: ''
       platform:
-        description: 'Target platform'
+        description: >-
+          Target platform, or a comma-separated list for one multi-platform
+          image (e.g. linux/amd64,linux/arm64). A list sets up QEMU for the
+          platforms the runner cannot build natively, and the secret scan
+          then reads the runner-native variant pulled back from the registry
+          rather than a locally loaded build.
         required: false
         type: string
         default: 'linux/arm64'
@@ -192,6 +197,12 @@ jobs:
             echo "TAGS_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Only for a multi-platform list: the default runner is arm64, so any
+      # amd64 leg is emulated. A single-platform call is native and skips it.
+      - name: Set up QEMU
+        if: contains(inputs.platform, ',')
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
@@ -211,13 +222,14 @@ jobs:
       # hit before with identical digests. The list itself is computed in the
       # resolve step above (steps.refs.outputs.tags), not inlined here, so
       # single_tag only has to be branched on once.
-      # load: true is safe here specifically because this workflow only ever
-      # builds ONE platform (inputs.platform is a single value, not a list) --
-      # a multi-platform result is a manifest list, which can't be loaded into
-      # the local daemon at all. Puts the just-pushed image in the local
-      # daemon too, so the scan step below reads the real pushed artifact
-      # without a second build or a registry pull (and without needing its
-      # own OCIR auth -- it never leaves the runner's local daemon).
+      # load: true is only possible for a SINGLE platform -- a multi-platform
+      # result is a manifest list, which can't be loaded into the local daemon
+      # at all, so a comma-separated inputs.platform turns it off and the scan
+      # step pulls the pushed image back instead. For a single platform it
+      # puts the just-pushed image in the local daemon, so the scan step reads
+      # the real pushed artifact without a second build or a registry pull
+      # (and without needing its own OCIR auth -- it never leaves the
+      # runner's local daemon).
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
@@ -226,10 +238,20 @@ jobs:
           platforms: ${{ inputs.platform }}
           build-args: ${{ inputs.build_args }}
           push: true
-          load: true
+          load: ${{ !contains(inputs.platform, ',') }}
           tags: ${{ steps.refs.outputs.tags }}
           cache-from: ${{ inputs.cache && 'type=gha' || '' }}
           cache-to: ${{ inputs.cache && 'type=gha,mode=min' || '' }}
+
+      # A multi-platform push is not in the local daemon (see load above), so
+      # pull it back before scanning. The daemon picks the runner's own
+      # platform from the manifest list, so only that variant is scanned --
+      # the platform list must include it. Already logged in to the registry.
+      - name: Pull pushed image for scanning
+        if: inputs.scan_image && contains(inputs.platform, ',')
+        env:
+          IMAGE: ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.primary_tag }}
+        run: docker pull "${IMAGE}"
 
       # Same technique and the same belt-and-braces zero-byte guard as
       # docker-build-check.yml's secret scan -- see that workflow for why the
