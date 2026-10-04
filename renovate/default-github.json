@@ -35,6 +35,13 @@
       ],
       "groupName": "cloud sdks",
       "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "One PR per consumer repo when several of its pinned workflows release at once, matching the one-PR-per-repo shape the single shared pin had.",
+      "matchPackageNames": [
+        "tnoff/github-workflows"
+      ],
+      "groupName": "tnoff/github-workflows reusable workflows"
     }
   ],
   "customManagers": [
@@ -51,17 +58,31 @@
       "currentValueTemplate": "main"
     },
     {
-      "description": "Track tnoff/github-workflows reusable-workflow pins. The built-in github-actions manager only updates a SHA-pinned `uses:` when it carries a `# vX.Y.Z` comment telling it the current version; consumers pin this repo as a bare 40-char SHA, so it extracts the dep and then offers no update -- no error, no warning. Measured 2026-08-28 in one file on public-transit: `actions/checkout@<sha>  # v7.0.1` was bumped twice the same day while the four bare-SHA github-workflows pins beside it never moved, across two dispatched runs and a freshly cut tag. The note on the first packageRule below -- that the built-in manager handles this on GitHub, so the GitLab preset's git-refs manager was not needed -- was wrong, and this restores its equivalent. Same shape as the terraform-modules manager above.",
+      "description": "Track tnoff/github-workflows reusable-workflow pins. The built-in github-actions manager only updates a SHA-pinned `uses:` when it carries a `# vX.Y.Z` comment telling it the current version; consumers pin this repo as a bare 40-char SHA, so it extracts the dep and then offers no update -- no error, no warning. Measured 2026-08-28 in one file on public-transit: `actions/checkout@<sha>  # v7.0.1` was bumped twice the same day while the four bare-SHA github-workflows pins beside it never moved, across two dispatched runs and a freshly cut tag. The note on the first packageRule below -- that the built-in manager handles this on GitHub, so the GitLab preset's git-refs manager was not needed -- was wrong, and this restores its equivalent. Same shape as the terraform-modules manager above. Only a bare pin (SHA at end of line, no comment) matches here; a pin with a `# <workflow>-vX.Y.Z` comment is handled by the per-workflow manager below, so this one only tracks pins not yet migrated.",
       "customType": "regex",
       "fileMatch": [
         "^\\.github/workflows/[^/]+\\.ya?ml$"
       ],
       "matchStrings": [
-        "uses:\\s+tnoff/github-workflows/[^@\\s]+@(?<currentDigest>[a-f0-9]{40})"
+        "uses:\\s+tnoff/github-workflows/[^@\\s]+@(?<currentDigest>[a-f0-9]{40})[ \\t]*$"
       ],
       "depNameTemplate": "https://github.com/tnoff/github-workflows",
       "datasourceTemplate": "git-refs",
       "currentValueTemplate": "main"
+    },
+    {
+      "description": "Per-workflow versions for tnoff/github-workflows pins (#95). Each reusable workflow is tagged `<name>-vX.Y.Z` independently, and a consumer pins `uses: .../<name>.yml@<sha>  # <name>-vX.Y.Z`. This reads the workflow name and the version comment, looks up only that workflow's tags, and moves the SHA and comment together -- so a commit to one workflow no longer opens a PR in every repo that calls any other. The untagged manager above tracked the head of main, which moved on every commit here.",
+      "customType": "regex",
+      "fileMatch": [
+        "^\\.github/workflows/[^/]+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "uses:\\s+tnoff/github-workflows/\\.github/workflows/(?<depName>[a-z0-9-]+)\\.ya?ml@(?<currentDigest>[a-f0-9]{40})[ \\t]+#[ \\t]*(?<currentValue>[a-z0-9-]+-v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "tnoff/github-workflows",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^{{{depName}}}-v(?<version>\\d+\\.\\d+\\.\\d+)$",
+      "versioningTemplate": "semver"
     }
   ]
 }
