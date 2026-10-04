@@ -77,11 +77,11 @@
         "^\\.github/workflows/[^/]+\\.ya?ml$"
       ],
       "matchStrings": [
-        "uses:\\s+tnoff/github-workflows/\\.github/workflows/(?<depName>[a-z0-9-]+)\\.ya?ml@(?<currentDigest>[a-f0-9]{40})[ \\t]+#[ \\t]*(?<currentValue>[a-z0-9-]+-v\\d+\\.\\d+\\.\\d+)"
+        "uses:\\s+tnoff/github-workflows/\\.github/workflows/(?<depName>[a-z0-9-]+)\\.ya?ml@(?<currentDigest>[a-f0-9]{40})[ \\t]+#[ \\t]*[a-z0-9-]+-(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "tnoff/github-workflows",
       "datasourceTemplate": "github-tags",
-      "extractVersionTemplate": "^{{{depName}}}-v(?<version>\\d+\\.\\d+\\.\\d+)$",
+      "extractVersionTemplate": "^{{{depName}}}-(?<version>v\\d+\\.\\d+\\.\\d+)$",
       "versioningTemplate": "semver"
     }
   ]
