@@ -14,13 +14,12 @@ Consumers pin a **full commit SHA** with a trailing comment naming the
 workflow's release tag, and Renovate moves the pin (see
 `renovate/default-github.json`). There are no floating `@v1` / `@v0` tags.
 
-Every workflow is versioned **independently**: tags are `<workflow>-vX.Y.Z`
-(e.g. `docker-push-v1.3.0`), cut by `self-release.yml` when a commit touches
-that workflow's file. A change to `tox.yml` therefore bumps only `tox`, and
-only the repos that call `tox.yml` get a Renovate PR. The bump level comes
-from the commit messages: `type!:` or a `BREAKING CHANGE:` footer is major,
-`feat:` is minor, anything else is patch (see
-`.github/scripts/release_workflows.py`).
+Every workflow is versioned **independently**. Its version lives in
+`versions/<workflow>.version`, you raise it in the PR that changes the
+workflow (`self-ci.yml` fails the PR if you forget), and `self-release.yml`
+tags it `<workflow>-vX.Y.Z` (e.g. `docker-push-v1.3.0`) on merge. A change to
+`tox.yml` therefore bumps only `tox`, and only the repos that call `tox.yml`
+get a Renovate PR. A new reusable workflow starts at `1.0.0`.
 
 ```yaml
 jobs:

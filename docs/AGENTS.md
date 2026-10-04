@@ -50,13 +50,14 @@ its `conftest` policy rejects `latest`.
 
 ### Versions
 
-This repo has no `VERSION` file. Each reusable workflow is versioned on its
-own: any commit that touches `.github/workflows/<name>.yml` releases
-`<name>-vX.Y.Z` on merge, so one commit should touch one workflow's file when
-it can. Use conventional-commit subjects, because they pick the bump: `feat:`
-minor, `type!:` or a `BREAKING CHANGE:` footer major, everything else patch.
-`bump-version.yml` and `tag.yml` stay in the library for consumer repos that
-keep a `VERSION` file; this repo does not use them on itself.
+There is no repo-wide `VERSION` file. Each reusable workflow has its own
+`versions/<name>.version` (`MAJOR.MINOR.PATCH`, no `v`, one line). A PR that
+changes `.github/workflows/<name>.yml` must raise that file -- patch for
+fixes, minor for additive inputs, major for breaking changes -- and
+`self-ci.yml` fails it otherwise. On merge `self-release.yml` tags
+`<name>-vX.Y.Z`. `bump-version.yml` and `tag.yml` stay in the library for
+consumer repos that keep their own `VERSION` file; this repo does not use
+them on itself.
 
 ### Pre-commit + actionlint are the gate
 
