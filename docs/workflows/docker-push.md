@@ -12,7 +12,7 @@
 | context | Build context directory | `string` | `.` | no |
 | dockerfile | Path to the Dockerfile, relative to the repo root | `string` | `Dockerfile` | no |
 | namespace | OCI object storage namespace | `string` | n/a | yes |
-| platform | Target platform | `string` | `linux/arm64` | no |
+| platform | Target platform, or a comma-separated list for one multi-platform image (e.g. linux/amd64,linux/arm64). A list sets up QEMU for the platforms the runner cannot build natively, and the secret scan then reads the runner-native variant pulled back from the registry rather than a locally loaded build. | `string` | `linux/arm64` | no |
 | registry | OCIR registry host, e.g. iad.ocir.io | `string` | n/a | yes |
 | repo_name | Repository name within the namespace | `string` | n/a | yes |
 | runner_labels | Runner labels as JSON array | `string` | `["ubuntu-24.04-arm"]` | no |
