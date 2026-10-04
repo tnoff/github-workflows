@@ -117,7 +117,9 @@ a PR; `assemble-changelog` folds the fragments into `CHANGELOG.md` on `main`;
   nothing dangles. Compare the `## [` headings with `git tag` to spot it.
 - Renovate PRs only cut a release when their branch starts with `renovate/dev-`
   (see [Renovate presets](#renovate-presets)); consumers gate `bump-version` on
-  that prefix.
+  that prefix. A Renovate PR on any other branch name skips `bump-version`
+  silently: the job shows `skipped`, the PR is otherwise green, and it merges
+  without a `VERSION` bump or fragment.
 
 ## Image bump contract
 
@@ -222,6 +224,24 @@ Rules that are not visible from the JSON:
   so match tooling by glob (`pytest-*`, `tox-*`, `types-*`) and list the `test-`
   rule **last**: `additionalBranchPrefix` is replaced by a later matching rule,
   not concatenated.
+- **The `dev-` prefix only covers `pep621` and `dockerfile`.** Updates from any
+  other manager (a `custom.regex` pin on a tarball URL, `github-actions`) land
+  on a plain `renovate/<dep>` branch, so `bump-version` never runs for them. If
+  such a pin is a runtime dependency that should cut a release, give it its own
+  rule in the consumer's `renovate.json`:
+
+  ```json
+  {
+    "matchManagers": ["custom.regex"],
+    "matchPackageNames": ["<owner>/<dep>"],
+    "additionalBranchPrefix": "dev-"
+  }
+  ```
+
+  The symptom is a Renovate PR whose `Bump version` job is `skipped` and whose
+  head branch lacks `dev-`. Example: dappertable in `public-transit`
+  ([#206](https://github.com/tnoff/public-transit/pull/206)). Renaming the
+  branch makes Renovate open a new PR; the old one has to be closed by hand.
 - `prHourlyLimit` and `prConcurrentLimit` are `0` on purpose.
   `config:recommended` caps at 2 per hour and 10 open, and the perennial
   workflow-pin PR takes one slot, so a repo with a backlog silently never

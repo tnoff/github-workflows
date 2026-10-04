@@ -3,7 +3,7 @@
   "description": "Python project conventions. Everything lands under dev- (which is what bump-version keys on) unless a later rule says otherwise; test/lint/build tooling is grouped, automerged, and never cuts a release.",
   "packageRules": [
     {
-      "description": "Base. Every pep621/dockerfile update lands under the dev- branch prefix. This is load-bearing, not cosmetic: each repo's bump-version job gates on $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\\/dev-/, so the prefix is what decides whether an update bumps VERSION, writes a changelog fragment, and cuts a release. Rules below override it for updates that must not do that.",
+      "description": "Base. Every pep621/dockerfile update lands under the dev- branch prefix. This is load-bearing, not cosmetic: each repo's bump-version job gates on $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^renovate\\/dev-/, so the prefix is what decides whether an update bumps VERSION, writes a changelog fragment, and cuts a release. Rules below override it for updates that must not do that. Scope: only pep621 and dockerfile. Updates from other managers (e.g. a custom.regex tarball pin) get no prefix, so bump-version is skipped for them unless the consumer adds its own additionalBranchPrefix rule.",
       "matchManagers": [
         "pep621",
         "dockerfile"
