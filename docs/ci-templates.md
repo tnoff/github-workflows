@@ -60,10 +60,10 @@ Per-workflow inputs, secrets and outputs are on the linked generated pages.
 | Images | [`docker-build-check`](workflows/docker-build-check.md) | PR-time build with no push, then a secret scan of the built image | none |
 | Images | [`trigger-bump-dispatch`](workflows/trigger-bump-dispatch.md) | After a push, ask docker-apps to rewrite its image pin (see [bump contract](#image-bump-contract)) | none |
 | Images | [`ocir-push`](workflows/ocir-push.md) | Legacy image push driven by a `VERSION` file and OCI secrets; superseded by `docker-push` | none |
-| Release | [`bump-version`](workflows/bump-version.md) | Commit a version bump onto a PR branch; idempotent, skips fork PRs, peels its own prior bump (`X-Auto-Bump: version` trailer) on rebase | none (App token) |
+| Release | [`bump-version`](workflows/bump-version.md) | Commit a version bump onto a PR branch; idempotent, skips fork PRs, peels its own prior bump (`X-Auto-Bump: version` trailer) on rebase. One `version_file`, or many via `version_files_command` (the consumer prints which files this PR needs bumped; all land in one commit) | none (App token) |
 | Release | [`tag`](workflows/tag.md) | Create a git tag from `VERSION` or a JSON file; no-op if the tag exists. Pushes as the `tnoff-ci` App because the default token triggers no downstream run | none (App token) |
 | Release | [`release`](workflows/release.md) | GitHub release for a tag `tag` just created, notes from the matching `CHANGELOG.md` section | `contents: write` |
-| Release | [`assemble-changelog`](workflows/assemble-changelog.md) | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and push; pairs with `tag`'s `gate_on_fragments` | none (App token) |
+| Release | [`assemble-changelog`](workflows/assemble-changelog.md) | Fold `changelog.d/*.md` fragments into `CHANGELOG.md` and push; pairs with `tag`'s `gate_on_fragments`. Several packages with their own version file and changelog fold in one commit via `version_files_command` | none (App token) |
 | Quality | [`pre-commit`](workflows/pre-commit.md) | Run all hooks (`language: system` hooks need their binary installed another way; `docker_image` hooks work) | none |
 | Quality | [`tox`](workflows/tox.md) | Discover `py<X><Y>` tox envs into a matrix plus a diff-cover gate; the trailing `result` job is the one stable name to require in a ruleset | none |
 | Quality | [`spellcheck`](workflows/spellcheck.md) | `pyspelling`; the caller commits the config | none |

@@ -12,6 +12,7 @@
 | runner_labels | Runner labels as JSON array (e.g., ["self-hosted", "oke"]) | `string` | `["ubuntu-24.04"]` | no |
 | version_file | Path to the version file | `string` | `VERSION` | no |
 | version_file_type | File type: 'plain' or 'json' | `string` | `plain` | no |
+| version_files_command | Bash command, run from the repo root on the default branch, that prints the version files of every package to fold -- one path per line, relative to the repo root. Replaces version_file when set (all files share version_file_type and version_json_key). Each package is folded on its own, but all the folds land in ONE commit and one push, so a repo with several independently versioned packages gets a single follow-up run rather than one per package. With this set, changelog_dir and changelog_file are resolved beside each version file (<dir of the version file>/<changelog_dir>), not at the repo root. A package with no fragments is skipped. Empty (default) folds the single version_file. | `string` | `` | no |
 | version_json_key | Key holding the version when version_file_type is json | `string` | `version` | no |
 
 ## Secrets

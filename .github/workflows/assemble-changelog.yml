@@ -12,6 +12,13 @@ name: Assemble changelog
 # (a hard-wrapped paragraph becoming one bullet per line, a fragment written
 # with its own `- ` becoming `- - `).
 #
+# One package or many. By default one `version_file` and one `changelog_dir` /
+# `changelog_file` at the repo root. A repo that versions several packages
+# independently sets `version_files_command` (the same input bump-version takes)
+# and each package then keeps its own fragments and changelog beside its version
+# file. Every package's fold lands in ONE commit and one push: seven pushes
+# would trigger seven follow-up runs, and the fragment-gated tag only wants one.
+#
 # ---------------------------------------------------------------------------
 # This workflow pushes to the DEFAULT BRANCH, which the fleet's rulesets protect
 # ---------------------------------------------------------------------------
@@ -48,6 +55,22 @@ on:
         required: false
         type: string
         default: 'version'
+      version_files_command:
+        description: >-
+          Bash command, run from the repo root on the default branch, that
+          prints the version files of every package to fold -- one path per
+          line, relative to the repo root. Replaces version_file when set (all
+          files share version_file_type and version_json_key). Each package is
+          folded on its own, but all the folds land in ONE commit and one push,
+          so a repo with several independently versioned packages gets a single
+          follow-up run rather than one per package. With this set,
+          changelog_dir and changelog_file are resolved beside each version
+          file (<dir of the version file>/<changelog_dir>), not at the repo
+          root. A package with no fragments is skipped. Empty (default) folds
+          the single version_file.
+        required: false
+        type: string
+        default: ''
       changelog_dir:
         description: 'Directory holding unassembled fragments'
         required: false
@@ -115,6 +138,7 @@ jobs:
         id: assemble
         env:
           VERSION_FILE: ${{ inputs.version_file }}
+          VERSION_FILES_COMMAND: ${{ inputs.version_files_command }}
           VERSION_FILE_TYPE: ${{ inputs.version_file_type }}
           VERSION_JSON_KEY: ${{ inputs.version_json_key }}
           CHANGELOG_DIR: ${{ inputs.changelog_dir }}
@@ -122,83 +146,140 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! ls "${CHANGELOG_DIR}"/*.md >/dev/null 2>&1; then
-            echo "No changelog fragments in ${CHANGELOG_DIR} -- nothing to assemble."
+          MULTI=false
+          [ -n "${VERSION_FILES_COMMAND}" ] && MULTI=true
+
+          read_version() {
+            if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+              jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' "$1" | tr -d '[:space:]'
+            else
+              tr -d '[:space:]' < "$1"
+            fi
+          }
+
+          # Folds one package's fragments into its changelog and stages the
+          # result. Args: version file, fragment dir, changelog file. Returns 0
+          # with nothing staged when there are no fragments. Sets FOLDED_VERSION.
+          fold() {
+            local vfile="$1" fdir="$2" cfile="$3"
+            FOLDED_VERSION=""
+
+            if ! ls "${fdir}"/*.md >/dev/null 2>&1; then
+              echo "No changelog fragments in ${fdir} -- nothing to assemble."
+              return 0
+            fi
+
+            local version date
+            version=$(read_version "${vfile}")
+            date=$(date -u +%Y-%m-%d)
+
+            # Refuse to fold into an already-released version. Without this, a
+            # fragment whose PR forgot to bump the version file is filed under a
+            # version that is already tagged: a second "## [$version]" block is
+            # appended, the tag job then finds the tag present and skips, release
+            # skips with it, and every job goes green while the change ships with
+            # no release of its own. Choosing the next version is the author's
+            # call, so fail loudly instead of guessing.
+            local version_re
+            version_re=$(printf '%s' "${version}" | sed 's/[][\.*^$\/]/\\&/g')
+            if [ -f "${cfile}" ] && grep -q "^## \[${version_re}\]" "${cfile}"; then
+              echo "::error::${cfile} has a '## [${version}]' section but fragments remain."
+              {
+                echo "  Fragments still pending in ${fdir}:"
+                printf '    %s\n' "${fdir}"/*.md
+                echo "  Whatever added them did not bump ${vfile}, so folding now"
+                echo "  would file the change under an already-released version and it"
+                echo "  would never be tagged. Bump ${vfile} and re-run."
+              } >&2
+              exit 1
+            fi
+
+            local section tmp f
+            section=$(mktemp)
+            {
+              printf '## [%s] - %s\n\n### Changed\n\n' "${version}" "${date}"
+              for f in "${fdir}"/*.md; do
+                # A bullet is a PARAGRAPH, not a physical line. Prefixing every
+                # non-empty line with '- ' broke three ways: a hard-wrapped
+                # paragraph became one bullet per line, a fragment already
+                # written with '- ' became '- - ', and a deliberate list could
+                # not be distinguished from a wrapped sentence.
+                awk '
+                  function flush() { if (buf != "") { print "- " buf; buf = "" } }
+                  /^[[:space:]]*$/                { flush(); next }
+                  /^[[:space:]]*[-*][[:space:]]+/ { flush(); sub(/^[[:space:]]*[-*][[:space:]]+/, ""); buf = $0; next }
+                                                  { sub(/^[[:space:]]+/, ""); buf = (buf == "" ? $0 : buf " " $0) }
+                  END                             { flush() }
+                ' "$f"
+              done
+              printf '\n'
+            } > "${section}"
+
+            tmp=$(mktemp)
+            if [ -f "${cfile}" ] && grep -q '^## \[' "${cfile}"; then
+              awk -v sect="${section}" '
+                !done && /^## \[/ { while ((getline l < sect) > 0) print l; done=1 }
+                { print }
+              ' "${cfile}" > "${tmp}"
+            elif [ -f "${cfile}" ]; then
+              cat "${cfile}" "${section}" > "${tmp}"
+            else
+              printf '# Changelog\n\n' > "${tmp}"
+              cat "${section}" >> "${tmp}"
+            fi
+            mv "${tmp}" "${cfile}"
+
+            git rm -q "${fdir}"/*.md
+
+            echo "Assembled changelog section for ${vfile} (${version}):"
+            echo "----"
+            cat "${section}"
+            echo "----"
+
+            git add "${cfile}"
+            FOLDED_VERSION="${version}"
+          }
+
+          if [ "${MULTI}" = "true" ]; then
+            OUT=$(bash -c "${VERSION_FILES_COMMAND}")
+            FILES=()
+            while IFS= read -r line; do
+              [ -n "${line}" ] && FILES+=("${line}")
+            done < <(printf '%s\n' "${OUT}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          else
+            FILES=("${VERSION_FILE}")
+          fi
+
+          FOLDED=()
+          for vfile in "${FILES[@]+"${FILES[@]}"}"; do
+            if [ "${MULTI}" = "true" ]; then
+              case "${vfile}" in
+                /*|..|../*|*/../*|*/..)
+                  echo "::error::version file '${vfile}' must be a path inside the repo."; exit 1 ;;
+              esac
+              # Fragment dir and changelog live beside each version file.
+              dir=$(dirname "${vfile}")
+              fold "${vfile}" "${dir}/${CHANGELOG_DIR}" "${dir}/${CHANGELOG_FILE}"
+            else
+              fold "${vfile}" "${CHANGELOG_DIR}" "${CHANGELOG_FILE}"
+            fi
+            [ -n "${FOLDED_VERSION}" ] && FOLDED+=("${vfile}: ${FOLDED_VERSION}")
+          done
+
+          if [ "${#FOLDED[@]}" -eq 0 ]; then
             echo "assembled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
-            VERSION=$(jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' "${VERSION_FILE}" | tr -d '[:space:]')
-          else
-            VERSION=$(tr -d '[:space:]' < "${VERSION_FILE}")
-          fi
-          DATE=$(date -u +%Y-%m-%d)
-
-          # Refuse to fold into an already-released version. Without this, a
-          # fragment whose PR forgot to bump the version file is filed under a
-          # version that is already tagged: a second "## [$VERSION]" block is
-          # appended, the tag job then finds the tag present and skips, release
-          # skips with it, and every job goes green while the change ships with
-          # no release of its own. Choosing the next version is the author's
-          # call, so fail loudly instead of guessing.
-          VERSION_RE=$(printf '%s' "${VERSION}" | sed 's/[][\.*^$\/]/\\&/g')
-          if [ -f "${CHANGELOG_FILE}" ] && grep -q "^## \[${VERSION_RE}\]" "${CHANGELOG_FILE}"; then
-            echo "::error::${CHANGELOG_FILE} has a '## [${VERSION}]' section but fragments remain."
-            {
-              echo "  Fragments still pending in ${CHANGELOG_DIR}:"
-              printf '    %s\n' "${CHANGELOG_DIR}"/*.md
-              echo "  Whatever added them did not bump ${VERSION_FILE}, so folding now"
-              echo "  would file the change under an already-released version and it"
-              echo "  would never be tagged. Bump ${VERSION_FILE} and re-run."
-            } >&2
-            exit 1
-          fi
-
-          SECTION=$(mktemp)
-          {
-            printf '## [%s] - %s\n\n### Changed\n\n' "${VERSION}" "${DATE}"
-            for f in "${CHANGELOG_DIR}"/*.md; do
-              # A bullet is a PARAGRAPH, not a physical line. Prefixing every
-              # non-empty line with '- ' broke three ways: a hard-wrapped
-              # paragraph became one bullet per line, a fragment already
-              # written with '- ' became '- - ', and a deliberate list could
-              # not be distinguished from a wrapped sentence.
-              awk '
-                function flush() { if (buf != "") { print "- " buf; buf = "" } }
-                /^[[:space:]]*$/                { flush(); next }
-                /^[[:space:]]*[-*][[:space:]]+/ { flush(); sub(/^[[:space:]]*[-*][[:space:]]+/, ""); buf = $0; next }
-                                                { sub(/^[[:space:]]+/, ""); buf = (buf == "" ? $0 : buf " " $0) }
-                END                             { flush() }
-              ' "$f"
-            done
-            printf '\n'
-          } > "${SECTION}"
-
-          TMP=$(mktemp)
-          if [ -f "${CHANGELOG_FILE}" ] && grep -q '^## \[' "${CHANGELOG_FILE}"; then
-            awk -v sect="${SECTION}" '
-              !done && /^## \[/ { while ((getline l < sect) > 0) print l; done=1 }
-              { print }
-            ' "${CHANGELOG_FILE}" > "${TMP}"
-          elif [ -f "${CHANGELOG_FILE}" ]; then
-            cat "${CHANGELOG_FILE}" "${SECTION}" > "${TMP}"
-          else
-            printf '# Changelog\n\n' > "${TMP}"
-            cat "${SECTION}" >> "${TMP}"
-          fi
-          mv "${TMP}" "${CHANGELOG_FILE}"
-
-          git rm -q "${CHANGELOG_DIR}"/*.md
-
-          echo "Assembled changelog section for ${VERSION}:"
-          echo "----"
-          cat "${SECTION}"
-          echo "----"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${CHANGELOG_FILE}"
-          git commit -m "docs: assemble changelog for ${VERSION}"
+          if [ "${MULTI}" = "true" ]; then
+            # Keep the `docs: assemble changelog` prefix: consumers key off it
+            # to skip the follow-up run this push triggers.
+            git commit -m "docs: assemble changelog for ${#FOLDED[@]} package(s)" \
+              -m "$(printf '%s\n' "${FOLDED[@]}")"
+          else
+            git commit -m "docs: assemble changelog for ${FOLDED[0]#*: }"
+          fi
           git push origin "HEAD:${GITHUB_REF_NAME}"
           echo "assembled=true" >> "$GITHUB_OUTPUT"

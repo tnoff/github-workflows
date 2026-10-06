@@ -10,11 +10,12 @@
 | allow_fork_prs | Allow fork PRs to run this workflow. Defaults false: this workflow pushes to the head branch, which a fork PR does not grant. | `boolean` | `false` | no |
 | bump_changelog | Write a changelog *fragment* for this change under changelog_dir. Conflict-free -- each PR drops a uniquely-named file rather than editing the shared changelog. Fragments are folded in at release time by assemble-changelog. | `boolean` | `false` | no |
 | bump_type | Semver level to bump: major, minor, or patch | `string` | `patch` | no |
-| changelog_dir | Directory holding unassembled changelog fragments | `string` | `changelog.d` | no |
+| changelog_dir | Directory holding unassembled changelog fragments. With version_files_command set it is resolved beside each bumped version file (<dir of the version file>/<changelog_dir>), one fragment per bumped file, instead of at the repo root. | `string` | `changelog.d` | no |
 | paths | JSON array of glob patterns; at least one must match a changed file to trigger a bump (e.g., ["src/**", "package.json"]). Empty array (default) means always run. | `string` | `[]` | no |
 | runner_labels | Runner labels as JSON array (e.g., ["self-hosted", "oke"]) | `string` | `["ubuntu-24.04"]` | no |
 | version_file | Path to version file | `string` | `VERSION` | no |
 | version_file_type | File type: 'plain' (raw text) or 'json' | `string` | `plain` | no |
+| version_files_command | Bash command, run from the repo root on the PR branch, that prints the version files to bump -- one path per line, relative to the repo root. Replaces version_file when set (all files share version_file_type and version_json_key). BASE_REF is in its environment, so it can diff against origin/$BASE_REF. Print nothing when no file needs a bump; a non-zero exit fails the job. A listed file that does not exist on the base branch is skipped. Refused for fork PRs. Empty (default) bumps version_file alone. | `string` | `` | no |
 | version_json_key | Key holding the version when version_file_type is json | `string` | `version` | no |
 
 ## Secrets
@@ -28,6 +29,7 @@
 
 | Name | Description |
 | :--- | :---------- |
-| new_version | Version after the bump (same as old_version if skipped) |
-| old_version | Version on the branch before the bump |
+| bumped_files | JSON array of the version files bumped by the pushed commit ([] if none) |
+| new_version | Version after the bump (same as old_version if skipped). Empty when version_files_command is set; see bumped_files. |
+| old_version | Version on the branch before the bump. Empty when version_files_command is set, since there is no single version; see bumped_files. |
 | version_bumped | Whether a bump commit was pushed to the PR branch (true/false) |
