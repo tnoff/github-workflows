@@ -16,6 +16,21 @@ name: Bump version file on PR
 # Supports plain-text version files (one line, "1.2.3") and JSON files
 # (package.json). JSON is rewritten with jq at 2-space indent.
 #
+# One version file or many. By default exactly one file is bumped
+# (`version_file`). A repo that versions several packages independently sets
+# `version_files_command` instead: a command, run from the repo root on the PR
+# branch, that prints the version files THIS PR needs bumped, one path per
+# line. Each file is judged on its own against the base branch -- bumped once if
+# the PR has not touched it, left alone if a human already did -- and all the
+# bumps (plus one changelog fragment) land in a single commit, so the peel and
+# recompute on rebase still has exactly one commit to undo. Keeping the "which
+# packages did this PR touch" rule in the consumer's own code, rather than as a
+# glob table here, is deliberate: it is the same rule that consumer's CI check
+# enforces, so the bump and the check cannot drift apart.
+#
+# That command is the PR branch's own code, run while the App token is checked
+# out, so it is refused for fork PRs even when allow_fork_prs is true.
+#
 # Ported from the now-deleted GitLab template /gitlab/bump-version.yml.
 #
 # ---------------------------------------------------------------------------
@@ -71,6 +86,19 @@ on:
         required: false
         type: string
         default: 'version'
+      version_files_command:
+        description: >-
+          Bash command, run from the repo root on the PR branch, that prints
+          the version files to bump -- one path per line, relative to the repo
+          root. Replaces version_file when set (all files share
+          version_file_type and version_json_key). BASE_REF is in its
+          environment, so it can diff against origin/$BASE_REF. Print nothing
+          when no file needs a bump; a non-zero exit fails the job. A listed
+          file that does not exist on the base branch is skipped. Refused for
+          fork PRs. Empty (default) bumps version_file alone.
+        required: false
+        type: string
+        default: ''
       bump_changelog:
         description: >-
           Write a changelog *fragment* for this change under changelog_dir.
@@ -81,7 +109,11 @@ on:
         type: boolean
         default: false
       changelog_dir:
-        description: 'Directory holding unassembled changelog fragments'
+        description: >-
+          Directory holding unassembled changelog fragments. With
+          version_files_command set it is resolved beside each bumped version
+          file (<dir of the version file>/<changelog_dir>), one fragment per
+          bumped file, instead of at the repo root.
         required: false
         type: string
         default: 'changelog.d'
@@ -111,14 +143,21 @@ on:
         required: true
     outputs:
       old_version:
-        description: 'Version on the branch before the bump'
+        description: >-
+          Version on the branch before the bump. Empty when version_files_command
+          is set, since there is no single version; see bumped_files.
         value: ${{ jobs.bump.outputs.old_version }}
       new_version:
-        description: 'Version after the bump (same as old_version if skipped)'
+        description: >-
+          Version after the bump (same as old_version if skipped). Empty when
+          version_files_command is set; see bumped_files.
         value: ${{ jobs.bump.outputs.new_version }}
       version_bumped:
         description: 'Whether a bump commit was pushed to the PR branch (true/false)'
         value: ${{ jobs.bump.outputs.version_bumped }}
+      bumped_files:
+        description: 'JSON array of the version files bumped by the pushed commit ([] if none)'
+        value: ${{ jobs.bump.outputs.bumped_files }}
 
 jobs:
   check:
@@ -193,6 +232,7 @@ jobs:
       old_version: ${{ steps.bump.outputs.old_version }}
       new_version: ${{ steps.bump.outputs.new_version }}
       version_bumped: ${{ steps.bump.outputs.version_bumped }}
+      bumped_files: ${{ steps.bump.outputs.bumped_files }}
     steps:
       # Short-lived installation token for the tnoff-ci App, minted per run.
       #
@@ -224,14 +264,29 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           BUMP_TYPE: ${{ inputs.bump_type }}
           VERSION_FILE: ${{ inputs.version_file }}
+          VERSION_FILES_COMMAND: ${{ inputs.version_files_command }}
           VERSION_FILE_TYPE: ${{ inputs.version_file_type }}
           VERSION_JSON_KEY: ${{ inputs.version_json_key }}
           BUMP_CHANGELOG: ${{ inputs.bump_changelog }}
           CHANGELOG_DIR: ${{ inputs.changelog_dir }}
         run: |
           set -euo pipefail
+
+          if [ -n "${VERSION_FILES_COMMAND}" ] && [ "${IS_FORK}" = "true" ]; then
+            echo "::error::version_files_command runs PR-branch code with the App token checked out;" \
+              "refusing for a fork PR."
+            exit 1
+          fi
+
+          # Single-file mode keeps its original contract exactly, including the
+          # old_version/new_version outputs. Multi-file mode has no single
+          # version to report, so those two stay empty and bumped_files carries
+          # the answer.
+          MULTI=false
+          [ -n "${VERSION_FILES_COMMAND}" ] && MULTI=true
 
           read_version() {
             if [ "${VERSION_FILE_TYPE}" = "json" ]; then
@@ -241,33 +296,104 @@ jobs:
             fi
           }
 
+          # Version of $2 as committed at ref $1 (a base branch, or a saved tip).
+          read_version_at() {
+            if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+              git show "$1:$2" \
+                | jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' | tr -d '[:space:]'
+            else
+              git show "$1:$2" | tr -d '[:space:]'
+            fi
+          }
+
+          write_version() {
+            if [ "${VERSION_FILE_TYPE}" = "json" ]; then
+              TMP=$(mktemp)
+              jq --indent 2 --arg key "${VERSION_JSON_KEY}" --arg val "$2" \
+                '.[$key] = $val' "$1" > "${TMP}"
+              mv "${TMP}" "$1"
+            else
+              echo "$2" > "$1"
+            fi
+          }
+
+          # The version a branch should carry: base, bumped once.
+          next_version() {
+            local major minor patch
+            major=$(echo "$1" | cut -d. -f1)
+            minor=$(echo "$1" | cut -d. -f2)
+            patch=$(echo "$1" | cut -d. -f3)
+            case "${BUMP_TYPE}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+              *) echo "::error::Unknown bump_type '${BUMP_TYPE}'. Must be major, minor, or patch." >&2; exit 1 ;;
+            esac
+            echo "${major}.${minor}.${patch}"
+          }
+
+          emit_none() {
+            {
+              echo "new_version=${NEW_VERSION_OUT}"
+              echo "version_bumped=false"
+              echo "bumped_files=[]"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          # Fills FILES with the version files to consider. Run again after a
+          # peel: the peeled bump commit itself put VERSION files into the
+          # branch diff, so only the post-peel diff says what the PR really
+          # touches.
+          collect_files() {
+            local out
+            if [ "${MULTI}" = "true" ]; then
+              out=$(bash -c "${VERSION_FILES_COMMAND}")
+            else
+              out="${VERSION_FILE}"
+            fi
+            FILES=()
+            while IFS= read -r line; do
+              [ -n "${line}" ] && FILES+=("${line}")
+            done < <(printf '%s\n' "${out}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            local f
+            for f in "${FILES[@]}"; do
+              case "${f}" in
+                /*|..|../*|*/../*|*/..)
+                  echo "::error::version file '${f}' must be a path inside the repo."; exit 1 ;;
+              esac
+            done
+          }
+
+          # Judges each file on its own against the base branch. Fills:
+          #   PENDING  files still at the base version -- they need the bump
+          #   STEADY   files already at the target (our bump, or a human's exact match)
+          #   MANUAL   files at some other version -- a human bumped them
+          # and OLD_VERSIONS/NEW_VERSIONS, parallel to PENDING.
+          evaluate() {
+            PENDING=(); OLD_VERSIONS=(); NEW_VERSIONS=(); STEADY=(); MANUAL=()
+            local f base cur target
+            for f in "${FILES[@]}"; do
+              if [ "${MULTI}" = "true" ] && ! git cat-file -e "origin/${BASE_REF}:${f}" 2>/dev/null; then
+                echo "${f}: not on origin/${BASE_REF} -- new file, skipping."
+                continue
+              fi
+              base=$(read_version_at "origin/${BASE_REF}" "${f}")
+              cur=$(read_version "${f}")
+              target=$(next_version "${base}")
+              echo "${f}: base=${base}  head=${cur}  target=${target}"
+              if [ "${cur}" = "${target}" ]; then
+                STEADY+=("${f}")
+              elif [ "${cur}" != "${base}" ]; then
+                MANUAL+=("${f}")
+              else
+                PENDING+=("${f}")
+                OLD_VERSIONS+=("${cur}")
+                NEW_VERSIONS+=("${target}")
+              fi
+            done
+          }
+
           git fetch origin "${BASE_REF}" "${HEAD_REF}"
-
-          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
-            BASE_VERSION=$(git show "origin/${BASE_REF}:${VERSION_FILE}" \
-              | jq -r --arg key "${VERSION_JSON_KEY}" '.[$key]' | tr -d '[:space:]')
-          else
-            BASE_VERSION=$(git show "origin/${BASE_REF}:${VERSION_FILE}" | tr -d '[:space:]')
-          fi
-          CURRENT_VERSION=$(read_version "${VERSION_FILE}")
-
-          # The version this branch should carry: base, bumped once.
-          MAJOR=$(echo "${BASE_VERSION}" | cut -d. -f1)
-          MINOR=$(echo "${BASE_VERSION}" | cut -d. -f2)
-          PATCH=$(echo "${BASE_VERSION}" | cut -d. -f3)
-          case "${BUMP_TYPE}" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-            *) echo "::error::Unknown bump_type '${BUMP_TYPE}'. Must be major, minor, or patch."; exit 1 ;;
-          esac
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-
-          echo "base=${BASE_VERSION}  head=${CURRENT_VERSION}  target=${NEW_VERSION}"
-
-          {
-            echo "old_version=${CURRENT_VERSION}"
-          } >> "$GITHUB_OUTPUT"
 
           # Is the tip our own auto-bump commit?
           OURS=false
@@ -275,62 +401,109 @@ jobs:
             OURS=true
           fi
 
-          # Steady state: the branch already carries the target. This is also
-          # what breaks the push -> workflow -> push loop, since our own bump
-          # commit re-triggers this job and it then exits here.
-          if [ "${CURRENT_VERSION}" = "${NEW_VERSION}" ]; then
-            echo "Branch already at ${NEW_VERSION} (base ${BASE_VERSION}) -- nothing to do."
-            {
-              echo "new_version=${CURRENT_VERSION}"
-              echo "version_bumped=false"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # A human bumped it themselves: respect it, leave the branch alone.
-          if [ "${CURRENT_VERSION}" != "${BASE_VERSION}" ] && [ "${OURS}" != "true" ]; then
-            echo "Manual bump (${BASE_VERSION} -> ${CURRENT_VERSION}) -- leaving as-is."
-            {
-              echo "new_version=${CURRENT_VERSION}"
-              echo "version_bumped=false"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Recompute-on-rebase: peel our own now-stale bump so the version is
-          # re-derived against the current base rather than stacking.
-          if [ "${OURS}" = "true" ]; then
-            echo "Peeling prior auto-bump commit; recomputing against origin/${BASE_REF}"
-            git reset --hard HEAD~1
-          fi
-
-          if [ "${VERSION_FILE_TYPE}" = "json" ]; then
-            TMP=$(mktemp)
-            jq --indent 2 --arg key "${VERSION_JSON_KEY}" --arg val "${NEW_VERSION}" \
-              '.[$key] = $val' "${VERSION_FILE}" > "${TMP}"
-            mv "${TMP}" "${VERSION_FILE}"
+          # What the branch reports before anything below touches it.
+          if [ "${MULTI}" = "true" ]; then
+            echo "old_version=" >> "$GITHUB_OUTPUT"
+            NEW_VERSION_OUT=""
           else
-            echo "${NEW_VERSION}" > "${VERSION_FILE}"
+            echo "old_version=$(read_version "${VERSION_FILE}")" >> "$GITHUB_OUTPUT"
+            NEW_VERSION_OUT=$(read_version "${VERSION_FILE}")
           fi
 
-          git add "${VERSION_FILE}"
+          # Recompute-on-rebase: peel our own prior bump so the versions are
+          # re-derived against the current base rather than stacking. This is
+          # always done on our own tip, not only when it looks stale: our own
+          # bump commit puts VERSION files into the branch diff, so before the
+          # peel a stale bump (the change that wanted it is gone) is
+          # indistinguishable from a current one.
+          PEELED=false
+          if [ "${OURS}" = "true" ]; then
+            TIP=$(git rev-parse HEAD)
+            TIP_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD \
+              | { grep -v -e "^${CHANGELOG_DIR}/" -e "/${CHANGELOG_DIR}/" || true; } | sort)
+            echo "Peeling prior auto-bump commit; recomputing against origin/${BASE_REF}"
+            git reset -q --hard HEAD~1
+            PEELED=true
+          fi
+
+          collect_files
+          evaluate
+
+          # Steady state: peeling and recomputing reproduces exactly the commit
+          # that was there -- same files, same versions -- so put it back. This
+          # is also what breaks the push -> workflow -> push loop, since our own
+          # bump commit re-triggers this job and it then exits here.
+          if [ "${PEELED}" = "true" ] && [ "${#PENDING[@]}" -gt 0 ]; then
+            WANT_FILES=$(printf '%s\n' "${PENDING[@]}" | sort)
+            SAME=true
+            [ "${WANT_FILES}" = "${TIP_FILES}" ] || SAME=false
+            for i in "${!PENDING[@]}"; do
+              [ "$(read_version_at "${TIP}" "${PENDING[$i]}")" = "${NEW_VERSIONS[$i]}" ] || SAME=false
+            done
+            if [ "${SAME}" = "true" ]; then
+              git reset -q --hard "${TIP}"
+              echo "Already at target (${PENDING[*]}) -- nothing to do."
+              emit_none
+              exit 0
+            fi
+          fi
+
+          if [ "${#PENDING[@]}" -eq 0 ]; then
+            if [ "${PEELED}" = "true" ]; then
+              # The PR no longer needs a bump (the change that wanted one is
+              # gone). Push the peeled branch so the stale bump does not linger.
+              echo "Nothing left to bump after peeling -- removing the stale bump commit."
+              git push --force-with-lease origin "HEAD:${HEAD_REF}"
+            elif [ "${#MANUAL[@]}" -gt 0 ]; then
+              # A human bumped it themselves: respect it, leave the branch alone.
+              echo "Manual bump in ${MANUAL[*]} -- leaving as-is."
+            else
+              echo "Already at target (${STEADY[*]:-no files}) -- nothing to do."
+            fi
+            emit_none
+            exit 0
+          fi
+
+          for i in "${!PENDING[@]}"; do
+            write_version "${PENDING[$i]}" "${NEW_VERSIONS[$i]}"
+            git add "${PENDING[$i]}"
+          done
+
+          if [ "${MULTI}" = "true" ]; then
+            SUMMARY="${#PENDING[@]} package version(s)"
+          else
+            SUMMARY="version to ${NEW_VERSIONS[0]}"
+          fi
 
           # Changelog fragments: each PR drops a uniquely-named file rather than
           # prepending to a shared changelog, which collides when two PRs land
           # in one run. Fragment name derives from the head branch, so it is
           # stable across rebases and disjoint between PRs.
           if [ "${BUMP_CHANGELOG}" = "true" ]; then
-            mkdir -p "${CHANGELOG_DIR}"
             ENTRY=$(printf '%s' "${PR_TITLE}" | sed -nE \
               's/^(fix|chore|feat)\(deps\): update dependency (.+) to (v?[^[:space:]]+)$/Bumped \2 to \3/p')
             if [ -z "${ENTRY}" ]; then
-              ENTRY="${PR_TITLE:-Patch bump to ${NEW_VERSION}}"
+              ENTRY="${PR_TITLE:-Patch bump to ${SUMMARY}}"
             fi
             SLUG=$(printf '%s' "${HEAD_REF}" | tr '/ ' '--' | tr -cd '[:alnum:]-' | cut -c1-60)
-            FRAGMENT="${CHANGELOG_DIR}/${SLUG:-pr-${PR_NUMBER:-0}}.md"
-            printf '%s\n' "${ENTRY}" > "${FRAGMENT}"
-            git add "${CHANGELOG_DIR}"
-            echo "Wrote changelog fragment ${FRAGMENT}: ${ENTRY}"
+            NAME="${SLUG:-pr-${PR_NUMBER:-0}}.md"
+            if [ "${MULTI}" = "true" ]; then
+              # One fragment per bumped package, beside its version file, so each
+              # package's changelog records only the changes that bumped it.
+              for f in "${PENDING[@]}"; do
+                FRAGMENT="$(dirname "${f}")/${CHANGELOG_DIR}/${NAME}"
+                mkdir -p "$(dirname "${FRAGMENT}")"
+                printf '%s\n' "${ENTRY}" > "${FRAGMENT}"
+                git add "${FRAGMENT}"
+                echo "Wrote changelog fragment ${FRAGMENT}: ${ENTRY}"
+              done
+            else
+              mkdir -p "${CHANGELOG_DIR}"
+              FRAGMENT="${CHANGELOG_DIR}/${NAME}"
+              printf '%s\n' "${ENTRY}" > "${FRAGMENT}"
+              git add "${CHANGELOG_DIR}"
+              echo "Wrote changelog fragment ${FRAGMENT}: ${ENTRY}"
+            fi
           fi
 
           git config user.name "github-actions[bot]"
@@ -338,10 +511,18 @@ jobs:
           # The trailer marks this as our own commit so a later run can peel and
           # recompute it. force-with-lease replaces a peeled stale bump safely
           # while refusing to clobber a concurrent Renovate rebase.
-          git commit -m "chore: bump ${BUMP_TYPE} version to ${NEW_VERSION}" -m "X-Auto-Bump: version"
+          BODY=$(for i in "${!PENDING[@]}"; do
+            echo "${PENDING[$i]}: ${OLD_VERSIONS[$i]} -> ${NEW_VERSIONS[$i]}"
+          done)
+          git commit -m "chore: bump ${BUMP_TYPE} ${SUMMARY}" -m "${BODY}" -m "X-Auto-Bump: version"
           git push --force-with-lease origin "HEAD:${HEAD_REF}"
 
           {
-            echo "new_version=${NEW_VERSION}"
+            if [ "${MULTI}" = "true" ]; then
+              echo "new_version="
+            else
+              echo "new_version=${NEW_VERSIONS[0]}"
+            fi
             echo "version_bumped=true"
+            printf 'bumped_files=%s\n' "$(printf '%s\n' "${PENDING[@]}" | jq -R . | jq -sc .)"
           } >> "$GITHUB_OUTPUT"
