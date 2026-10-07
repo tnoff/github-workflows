@@ -93,6 +93,17 @@ on:
         required: false
         type: number
         default: 30
+      fail_on_repository_changed:
+        description: >-
+          Fail the job when Renovate finishes the repository with result
+          `repository-changed`. Renovate stops partway through the repo in that
+          case (branches later in its order are never rebased, superseded PRs
+          are never closed, groups never form) but still exits 0, so without
+          this check the run is a silent partial success and
+          notify-failure.yml never fires. Set false to log a warning only.
+        required: false
+        type: boolean
+        default: true
     secrets:
       app_client_id:
         description: >-
@@ -141,8 +152,41 @@ jobs:
         uses: renovatebot/github-action@39b914146caeff8cd512e61c8992f1d5913af85c  # v46.2.5
         with:
           token: ${{ steps.app-token.outputs.token }}
+          # The action only forwards RENOVATE_*, LOG_LEVEL and a few others
+          # into the container; setting env-regex replaces that allowlist, so
+          # it restates the default and adds the two log-file variables.
+          env-regex: >-
+            ^(?:RENOVATE_\w+|LOG_LEVEL|LOG_FILE|LOG_FILE_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|NO_COLOR|(?:HTTPS?|NO)_PROXY|(?:https?|no)_proxy)$
         env:
           RENOVATE_PLATFORM: github
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_ALLOWED_COMMANDS: ${{ inputs.allowed_commands }}
           LOG_LEVEL: ${{ inputs.log_level }}
+          # JSON log written to /tmp, which the action bind-mounts into the
+          # container by default, so the next step can read the result back.
+          LOG_FILE: ${{ runner.temp }}/renovate-log.ndjson
+          LOG_FILE_LEVEL: info
+
+      # Renovate exits 0 with `"result": "repository-changed"` when it aborts
+      # a repository mid-run (see tnoff/github-workflows#104), so the job
+      # concludes success on a partial run. Read the result back from the log.
+      # `if: always()` so it still runs if the Renovate step itself failed, in
+      # which case there may be no log and the step stays quiet.
+      - name: Check Renovate result
+        if: always()
+        env:
+          LOG: ${{ runner.temp }}/renovate-log.ndjson
+          FAIL: ${{ inputs.fail_on_repository_changed }}
+        run: |
+          [ -s "${LOG}" ] || { echo "no Renovate log at ${LOG}; nothing to check"; exit 0; }
+          result=$(jq -r 'select(.msg == "Repository finished") | .result' "${LOG}" | tail -n1)
+          echo "Renovate repository result: ${result:-unknown}"
+          if [ "${result}" = "repository-changed" ]; then
+            msg="Renovate aborted with repository-changed; the run is partial"
+            msg="${msg} (later branches not rebased, superseded PRs not closed)"
+            if [ "${FAIL}" = "true" ]; then
+              echo "::error title=Renovate repository-changed::${msg}"
+              exit 1
+            fi
+            echo "::warning title=Renovate repository-changed::${msg}"
+          fi
