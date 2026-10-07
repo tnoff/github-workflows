@@ -162,9 +162,12 @@ jobs:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_ALLOWED_COMMANDS: ${{ inputs.allowed_commands }}
           LOG_LEVEL: ${{ inputs.log_level }}
-          # JSON log written to /tmp, which the action bind-mounts into the
-          # container by default, so the next step can read the result back.
-          LOG_FILE: ${{ runner.temp }}/renovate-log.ndjson
+          # JSON log written to /tmp, the only path the action bind-mounts
+          # into the container by default, so the next step can read the
+          # result back. Not $RUNNER_TEMP: that path does not exist inside the
+          # container, Renovate's logger then fails to initialise and the
+          # container exits 1 before doing any work.
+          LOG_FILE: /tmp/renovate-log.ndjson
           LOG_FILE_LEVEL: info
 
       # Renovate exits 0 with `"result": "repository-changed"` when it aborts
@@ -175,7 +178,7 @@ jobs:
       - name: Check Renovate result
         if: always()
         env:
-          LOG: ${{ runner.temp }}/renovate-log.ndjson
+          LOG: /tmp/renovate-log.ndjson
           FAIL: ${{ inputs.fail_on_repository_changed }}
         run: |
           [ -s "${LOG}" ] || { echo "no Renovate log at ${LOG}; nothing to check"; exit 0; }
