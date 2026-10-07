@@ -250,6 +250,18 @@ Rules that are not visible from the JSON:
   `RENOVATE_PLATFORM=local RENOVATE_DRY_RUN=full LOG_LEVEL=debug npx renovate`
   in a checkout: no token, no PRs. Judge grouping by the branch name, not the PR
   title (a group is titled after its only member that run).
+- The `tnoff-ci` App needs **Commit statuses: Read and write**. Renovate posts
+  a `renovate/stability-days` status on any branch with a `minimumReleaseAge`
+  (the cloud SDK group has one), and when that POST is refused it reports
+  `repository-changed` and stops the run partway through the repo -- a 403
+  surfaces as the misleading "Repository has changed during renovation -
+  aborting". The cause only shows at `log_level: debug`
+  (`Caught error setting branch status - aborting`, with
+  `x-accepted-github-permissions: statuses=write` on the 403). A recreated App
+  or a narrowed permission set brings it back; new permissions also have to be
+  accepted on the installation before they apply
+  ([#104](https://github.com/tnoff/github-workflows/issues/104)).
+  `renovate.yml` fails the job on this result, so it no longer passes silently.
 
 ## Tox repos
 
