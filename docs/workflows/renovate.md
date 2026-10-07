@@ -8,6 +8,7 @@
 | Name | Description | Type | Default | Required |
 | :--- | :---------- | :--- | :------ | :------: |
 | allowed_commands | JSON array of regexes allowlisting repo-level postUpgradeTasks commands. postUpgrade shell is refused unless allowlisted in the self-hosted (global) config -- a repo's renovate.json cannot authorize its own commands. The option is `allowedCommands`; it was renamed from `allowedPostUpgradeCommands` in Renovate v40, so the old env var is silently ignored and leaves the allowlist empty. Repos without a matching script simply never match. | `string` | `["^bash ci/renovate-terraform-docs\\.sh$"]` | no |
+| fail_on_repository_changed | Fail the job when Renovate finishes the repository with result `repository-changed`. Renovate stops partway through the repo in that case (branches later in its order are never rebased, superseded PRs are never closed, groups never form) but still exits 0, so without this check the run is a silent partial success and notify-failure.yml never fires. Set false to log a warning only. | `boolean` | `true` | no |
 | log_level | Renovate LOG_LEVEL (debug when diagnosing a run) | `string` | `info` | no |
 | runner_labels | Runner labels as JSON array (e.g., ["self-hosted", "oke"]) | `string` | `["ubuntu-24.04"]` | no |
 | timeout_minutes | Backstop, not a budget. Renovate itself finishes in 1.5-12 min across these repos; this only caps a wedged run. | `number` | `30` | no |
