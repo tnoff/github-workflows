@@ -227,8 +227,8 @@ jobs:
           # A heuristic on the cron's shape, not a cron parser; each tier is
           # several times its nominal gap because slots are dropped, not late.
           cron_threshold() {
-            local m h dom mon dow
-            read -r m h dom mon dow _ <<< "$1"
+            local h dom mon dow
+            read -r _ h dom mon dow _ <<< "$1"
             if [[ "${dom}${mon}" != '**' ]]; then
               echo $(( 45 * 86400 ))                      # monthly or rarer
             elif [[ "${dow}" != '*' ]]; then
@@ -309,7 +309,9 @@ jobs:
 
               if [ "${wf_state}" = disabled_inactivity ]; then
                 report_dead "${key}" "${full}" "${wf_name}" "${wf_url}" \
-                  "Scheduled workflow was DISABLED by GitHub after 60 days without repository activity, so its cron no longer fires. Re-enable it in the Actions tab (or push a commit and re-enable)."
+                  "Scheduled workflow was DISABLED by GitHub after 60 days without" \
+                  " repository activity, so its cron no longer fires. Re-enable it" \
+                  " in the Actions tab (or push a commit and re-enable)."
                 continue
               fi
               [ "${wf_state}" = active ] || continue
@@ -347,7 +349,10 @@ jobs:
                 $(( age / 3600 )) $(( threshold / 3600 ))
               if [ "${age}" -gt "${threshold}" ]; then
                 report_dead "${key}" "${full}" "${wf_name}" "${wf_url}" \
-                  "Scheduled workflow looks DEAD: ${seen}, over the $(( threshold / 3600 ))h limit for cron '${cron_used}'. GitHub drops many slots, so this is sized well past normal lateness. Check the workflow is enabled and the default branch carries the schedule."
+                  "Scheduled workflow looks DEAD: ${seen}, over the $(( threshold / 3600 ))h" \
+                  " limit for cron '${cron_used}'. GitHub drops many slots, so this is" \
+                  " sized well past normal lateness. Check the workflow is enabled and" \
+                  " the default branch carries the schedule."
               fi
             done <<< "${wfs}"
           done
