@@ -286,7 +286,7 @@ the newest `env_list` entry.
 | File | Purpose |
 |---|---|
 | `notify-failure.yml` | Per-repo `workflow_run` notifier template: Discord alert when any workflow on a non-PR event fails. Must exist on a repo's default branch to fire; each consumer carries its own copy |
-| `startup-failure-sweep.yml` | Hourly poll of every repo the `tnoff-ci` App can see for `startup_failure` runs and failed notifiers, which emit no event. Single instance, lives here |
+| `startup-failure-sweep.yml` | Hourly poll of every repo the `tnoff-ci` App can see for `startup_failure` runs, failed notifiers and dead `schedule:` workflows, which emit no event. Single instance, lives here |
 | `fleet-mirror.yml` | Hourly push of GitHub `main` to the frozen GitLab copies (read-only history); never force-pushes |
 | `self-ci.yml`, `self-scheduled.yml`, `self-release.yml`, `self-techdocs-publish.yml` | This repo's own PR checks, weekly Renovate, per-workflow releases and TechDocs. They call the library through local `./` paths so a PR is tested with its own edits |
 
@@ -303,12 +303,18 @@ are best-effort.
 - A `startup_failure` run creates no job and no `workflow_run` event, so no
   event-driven notifier can see it. Polling is the only mechanism; "nothing is
   failing" and "nothing is reporting" are different claims.
-- The sweep's App token needs `Actions: read`. Public repos answer
-  `/actions/runs` to any token, so a missing permission shows up only on the
+- The sweep's App token needs `Actions: read` and `Contents: read` (to read
+  each workflow's cron). Public repos answer both to any token, so a missing permission shows up only on the
   private repos, and the sweep fails hard naming it rather than skipping them.
 - Scheduled crons drop most slots (74% measured over 8 days), so the sweep's
   lookback is 8 hours, wider than the worst observed gap, with a high-water
   mark to suppress duplicates.
+- A scheduled workflow that stops firing leaves no run to fail. The sweep flags
+  workflows GitHub disabled for inactivity (`disabled_inactivity`) and ones whose
+  last scheduled run is older than a limit chosen from the cron's shape (12h
+  hourly, 24h sub-daily, 72h daily, 5d weekdays, 14d weekly, 45d monthly), then
+  re-alerts once a day while they stay dead. It catches a dead schedule, not a
+  late one.
 
 ## Changing this repo
 

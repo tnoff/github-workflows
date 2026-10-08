@@ -28,7 +28,23 @@ name: Startup failure sweep
 #      is silent. Polling is what makes it not silent: this run is a different
 #      workflow, so it can say what the notifier could not.
 #
-# Neither is fixable with another event subscription. There is no event. Polling
+#   3. DEAD SCHEDULES. A `schedule:` workflow that stops firing produces no run,
+#      so there is nothing to fail and nothing to report. Two ways it happens:
+#      GitHub turns scheduled workflows off after 60 days without repo activity
+#      (workflow state `disabled_inactivity`, read straight from the API), or
+#      the cron simply never fires. The second is judged by age of the last
+#      scheduled run. The threshold is sized from the cron's *tier*, not its
+#      nominal interval, because GitHub drops most hourly slots (see below):
+#      12h hourly, 24h for sub-daily, 72h daily, 5d weekday-only, 14d weekly,
+#      45d monthly. This only catches a schedule that is properly dead, never
+#      one that is merely late; that is the price of the dropped slots.
+#
+#      Unlike the two above, a dead schedule is a CONDITION, not an event, so
+#      the high-water mark cannot dedupe it. A second cache file records when
+#      each was last alerted and re-alerts once a day while it stays dead. Like
+#      the mark, a cache miss only costs a duplicate, never a gap.
+#
+# Neither of the first two is fixable with another event subscription. There is no event. Polling
 # is not the lazy option here, it is the only option.
 #
 # WHY IT LIVES HERE, and is not `self-*` and not `workflow_call`
@@ -107,7 +123,8 @@ jobs:
       # Installation-wide token, not the default GITHUB_TOKEN, which is scoped
       # to this repo alone and could not read another repo's runs.
       #
-      # Needs `Actions: read` on the App. Public repos answer
+      # Needs `Actions: read` and `Contents: read` on the App (the latter to
+      # read each workflow file for its cron). Public repos answer
       # /actions/runs to any valid token, so a missing permission shows up ONLY
       # on the three private repos -- which is why an unreadable repo below is a
       # hard failure with the permission named, rather than a skip. A sweep that
@@ -136,11 +153,23 @@ jobs:
           key: startup-sweep-hwm-${{ github.run_id }}
           restore-keys: startup-sweep-hwm-
 
+      # When each dead schedule was last alerted, so a standing condition
+      # re-alerts daily instead of every sweep. Same fail-safe as the mark: a
+      # miss means a duplicate alert, never a missed one.
+      - name: Restore the dead-schedule alert state
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: .sweep-dead
+          key: startup-sweep-dead-${{ github.run_id }}
+          restore-keys: startup-sweep-dead-
+
       - name: Sweep
         id: sweep
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           LOOKBACK: ${{ inputs.lookback_minutes || '480' }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
 
@@ -178,10 +207,62 @@ jobs:
           # /installation/repositories is what an installation token can list;
           # it IS the fleet definition. Paginated by --paginate because the
           # default page size would silently truncate at 30.
-          repos=$(gh api --paginate /installation/repositories \
-            --jq '.repositories[] | select(.archived | not) | .full_name')
+          repo_rows=$(gh api --paginate /installation/repositories \
+            --jq '.repositories[] | select(.archived | not) | [.full_name, .default_branch] | @tsv')
+          repos=$(printf '%s\n' "${repo_rows}" | cut -f1)
+          declare -A default_branch
+          while IFS=$'\t' read -r name branch; do
+            default_branch["${name}"]="${branch}"
+          done <<< "${repo_rows}"
           echo "fleet: $(printf '%s\n' "${repos}" | wc -l) repos"
           echo
+
+          # Dead-schedule bookkeeping. NOW_EPOCH anchors every age below.
+          NOW_EPOCH=$(date -u +%s)
+          REALERT_SECONDS=86400
+          [ -f .sweep-dead ] || : > .sweep-dead
+          : > .sweep-dead.new
+
+          # How stale a scheduled workflow may get before it counts as dead.
+          # A heuristic on the cron's shape, not a cron parser; each tier is
+          # several times its nominal gap because slots are dropped, not late.
+          cron_threshold() {
+            local h dom mon dow
+            read -r _ h dom mon dow _ <<< "$1"
+            if [[ "${dom}${mon}" != '**' ]]; then
+              echo $(( 45 * 86400 ))                      # monthly or rarer
+            elif [[ "${dow}" != '*' ]]; then
+              if [[ "${dow}" =~ [-,] ]]; then
+                echo $(( 5 * 86400 ))                     # weekdays: spans a weekend
+              else
+                echo $(( 14 * 86400 ))                    # weekly
+              fi
+            elif [[ "${h}" == *'*'* && "${h}" != */* && "${h}" != *[-,]* ]]; then
+              echo $(( 12 * 3600 ))                       # hourly: measured 6h max gap
+            elif [[ "${h}" =~ [*/,-] ]]; then
+              echo $(( 24 * 3600 ))                       # several times a day
+            else
+              echo $(( 72 * 3600 ))                       # daily
+            fi
+          }
+
+          # Record one dead schedule, unless it was alerted inside the last day.
+          # $1 key  $2 repo  $3 name  $4 url  $5 detail
+          report_dead() {
+            local prev
+            prev=$(awk -F'\t' -v k="$1" '$1 == k { print $2 }' .sweep-dead)
+            if [ -n "${prev}" ] && [ $(( NOW_EPOCH - prev )) -lt "${REALERT_SECONDS}" ]; then
+              printf '%s\t%s\n' "$1" "${prev}" >> .sweep-dead.new
+              printf '%-30s %s dead (already alerted)\n' "$2" "$3"
+              return
+            fi
+            printf '%s\t%s\n' "$1" "${NOW_EPOCH}" >> .sweep-dead.new
+            jq -nc --arg repo "$2" --arg wf "$3" --arg url "$4" --arg detail "$5" \
+                   --arg branch "${default_branch[$2]}" --arg now "${NOW}" '
+              {repo: $repo, workflow: $wf, branch: $branch, actor: "n/a", sha: "n/a",
+               url: $url, created: $now, kind: "dead_schedule", detail: $detail}
+            ' >> "${findings}"
+          }
 
           for full in ${repos}; do
             # Branch on the EXIT STATUS, never on whether stdout looks empty:
@@ -213,7 +294,74 @@ jobs:
                    url: .html_url, created: .created_at, kind: "dead_notifier"}
               ' >> "${findings}"
             fi
+
+            # The third blind spot: a scheduled workflow that stopped firing.
+            if ! wfs=$(gh api --paginate "repos/${full}/actions/workflows" --jq '
+                  .workflows[]
+                  | select(.path | startswith(".github/workflows/"))
+                  | [.id, .path, .name, .state, .created_at, .html_url] | @tsv' 2>&1); then
+              printf '%s (workflow list)\n' "${full}" >> "${unreadable}"
+              continue
+            fi
+            while IFS=$'\t' read -r wf_id wf_path wf_name wf_state wf_created wf_url; do
+              [ -n "${wf_id}" ] || continue
+              key="${full}:${wf_path}"
+
+              if [ "${wf_state}" = disabled_inactivity ]; then
+                report_dead "${key}" "${full}" "${wf_name}" "${wf_url}" \
+                  "Scheduled workflow was DISABLED by GitHub after 60 days without" \
+                  " repository activity, so its cron no longer fires. Re-enable it" \
+                  " in the Actions tab (or push a commit and re-enable)."
+                continue
+              fi
+              [ "${wf_state}" = active ] || continue
+
+              if ! src=$(gh api -H 'Accept: application/vnd.github.raw+json' \
+                    "repos/${full}/contents/${wf_path}" 2>&1); then
+                printf '%s (workflow contents)\n' "${full}" >> "${unreadable}"
+                continue
+              fi
+              # Anchored to line start so a commented-out cron does not count.
+              threshold=""
+              while IFS= read -r cron; do
+                [ -n "${cron}" ] || continue
+                t=$(cron_threshold "${cron}")
+                if [ -z "${threshold}" ] || [ "${t}" -lt "${threshold}" ]; then
+                  threshold="${t}"
+                  cron_used="${cron}"
+                fi
+              done < <(printf '%s\n' "${src}" \
+                | sed -nE "s/^[[:space:]]*-?[[:space:]]*cron:[[:space:]]*['\"]?([^'\"#]*[^'\"# ]).*/\1/p")
+              [ -n "${threshold}" ] || continue   # no schedule trigger
+
+              if ! last=$(gh api "repos/${full}/actions/workflows/${wf_id}/runs?event=schedule&per_page=1" \
+                    --jq '.workflow_runs[0].created_at // empty' 2>&1); then
+                printf '%s (workflow runs)\n' "${full}" >> "${unreadable}"
+                continue
+              fi
+              if [ -n "${last}" ]; then
+                ref="${last}"; seen="last scheduled run ${last}"
+              else
+                ref="${wf_created}"; seen="no scheduled run has ever been recorded (workflow first seen ${wf_created})"
+              fi
+              age=$(( NOW_EPOCH - $(date -u -d "${ref}" +%s) ))
+              printf '%-30s %-28s age %6dh limit %4dh\n' "${full}" "${wf_path##*/}" \
+                $(( age / 3600 )) $(( threshold / 3600 ))
+              if [ "${age}" -gt "${threshold}" ]; then
+                report_dead "${key}" "${full}" "${wf_name}" "${wf_url}" \
+                  "Scheduled workflow looks DEAD: ${seen}, over the $(( threshold / 3600 ))h" \
+                  " limit for cron '${cron_used}'. GitHub drops many slots, so this is" \
+                  " sized well past normal lateness. Check the workflow is enabled and" \
+                  " the default branch carries the schedule."
+              fi
+            done <<< "${wfs}"
           done
+
+          # Persist alert state only for a real run: a hand-dispatched dry run
+          # must not mark a dead schedule as already reported.
+          if [ "${EVENT_NAME}" = schedule ] || [ "${DRY_RUN}" = false ]; then
+            mv .sweep-dead.new .sweep-dead
+          fi
 
           total=$(wc -l < "${findings}")
           echo
@@ -246,8 +394,8 @@ jobs:
             n_bad=$(wc -l < "${unreadable}")
             bad_list=$(tr '\n' ' ' < "${unreadable}" | sed 's/ *$//')
             echo "::error::Could not read Actions runs for ${n_bad} repo(s): ${bad_list}." \
-                 "The tnoff-ci App needs Actions: read -- public repos answer without it," \
-                 "private ones do not. This run's own failure reaches #ci-alerts via" \
+                 "The tnoff-ci App needs Actions: read and Contents: read -- public repos" \
+                 "answer without them, private ones do not. This run's own failure reaches #ci-alerts via" \
                  "notify-failure.yml."
             exit 1
           fi
@@ -262,6 +410,13 @@ jobs:
         with:
           path: .sweep-hwm
           key: startup-sweep-hwm-${{ github.run_id }}
+
+      - name: Save the dead-schedule alert state
+        if: always() && hashFiles('.sweep-dead') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: .sweep-dead
+          key: startup-sweep-dead-${{ github.run_id }}
 
   notify:
     name: Report to Discord
@@ -294,6 +449,7 @@ jobs:
         why it comes from the periodic sweep and not from notify-failure.yml. The
         usual cause is a uses: whose inputs or secrets no longer match the
         pinned callee.'
+        || matrix.finding.kind == 'dead_schedule' && matrix.finding.detail
         || 'The failure NOTIFIER itself failed in this repo. It excludes its own
         runs to avoid a loop, so nothing else would have said so -- and while it
         is broken, other failures there may also be going unreported.' }}
