@@ -318,6 +318,13 @@ jobs:
 
               if ! src=$(gh api -H 'Accept: application/vnd.github.raw+json' \
                     "repos/${full}/contents/${wf_path}" 2>&1); then
+                # GitHub keeps listing a deleted workflow as active while it
+                # has runs, so its file 404s. That is a stale registration, not
+                # a permission gap: skip it rather than failing the sweep.
+                if printf '%s' "${src}" | grep -q 'HTTP 404'; then
+                  printf '%-30s %-25s file deleted, skipped\n' "${full}" "${wf_path##*/}"
+                  continue
+                fi
                 printf '%s (workflow contents)\n' "${full}" >> "${unreadable}"
                 continue
               fi
