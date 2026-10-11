@@ -4,5 +4,16 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": false,
   "enabledManagers": ["pre-commit", "dockerfile", "gitlabci", "github-actions"],
-  "labels": ["dependencies"]
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "A pin bump edits a reusable workflow, and self-ci.yml fails any PR that changes one without raising its versions/<name>.version. Renovate cannot do that itself, so this task patch-bumps the version file of each workflow the update touched. The command must also be allowlisted in the global config: self-scheduled.yml passes it as allowed_commands.",
+      "matchManagers": ["github-actions"],
+      "postUpgradeTasks": {
+        "commands": ["bash .github/scripts/renovate-bump-versions.sh"],
+        "fileFilters": ["versions/*.version"],
+        "executionMode": "branch"
+      }
+    }
+  ]
 }

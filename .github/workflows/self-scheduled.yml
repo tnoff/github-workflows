@@ -17,6 +17,12 @@ jobs:
   renovate:
     name: Renovate
     uses: ./.github/workflows/renovate.yml
+    with:
+      # Keeps the default terraform-docs entry and adds the version-bump task
+      # from renovate.json (renovate-bump-versions.sh).
+      allowed_commands: >-
+        ["^bash ci/renovate-terraform-docs\\.sh$",
+        "^bash \\.github/scripts/renovate-bump-versions\\.sh$"]
     secrets:
       app_client_id: ${{ secrets.CI_APP_CLIENT_ID }}
       app_private_key: ${{ secrets.CI_APP_PRIVATE_KEY }}
