@@ -59,6 +59,12 @@ fixes, minor for additive inputs, major for breaking changes -- and
 consumer repos that keep their own `VERSION` file; this repo does not use
 them on itself.
 
+Renovate pin bumps edit workflow files too, so `renovate.json` runs
+`.github/scripts/renovate-bump-versions.sh` as a `postUpgradeTasks` command to
+patch-bump the matching version file. That command must stay allowlisted in
+`allowed_commands` in `self-scheduled.yml`, and it only runs when Renovate
+updates a branch; to re-trigger an existing PR, add the `rebase` label.
+
 ### Pre-commit + actionlint are the gate
 
 Every PR runs pre-commit (actionlint, shellcheck via actionlint, SHA-pin
