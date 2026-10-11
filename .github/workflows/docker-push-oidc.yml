@@ -1,0 +1,381 @@
+name: Docker push (OIDC)
+
+# Same as docker-push.yml, but the job logs in to OCIR WITHOUT a stored auth token
+# (tnoff/terraform#180). It exchanges its own GitHub OIDC token for a short-lived OCI
+# session token and uses that to sign a request to the registry's token endpoint,
+# which returns a bearer token for `docker login -u BEARER_TOKEN`. Which OCI user the
+# job becomes, and which repositories it may push to, is decided in OCI: a trust rule
+# in terraform-admin maps this repo's `sub` (a push to main) to a service user whose
+# policy names the OCIR repo(s). Nothing here chooses an identity.
+#
+# A NEW FILE rather than an option on docker-push.yml, on purpose: this job requests
+# `id-token: write`, and a reusable workflow that asks for a permission its caller did
+# not grant fails at startup. Adding that to docker-push.yml would break every
+# existing caller as soon as its pin moved.
+#
+# The caller job must grant `id-token: write`, pass the exchange client secret and the
+# tenancy OCID as secrets, and the exchange domain URL and client id as inputs.
+#
+# Everything below the login step is docker-push.yml, kept the same so the two stay
+# easy to diff.
+#
+# Reusable workflow: build an image and push it to OCIR under two tags
+# (`latest`/`tag_override` plus an immutable per-commit tag), or just the
+# first if the caller sets single_tag: true.
+#
+# Ported from the now-deleted GitLab template /gitlab/buildkit-docker-push.yml. Three things go away.
+#
+# The bespoke buildkit setup: that template started an ephemeral in-job
+# buildkitd on a unix socket (which needed a privileged pod) and drove it with
+# buildctl, because the cluster buildkitd Deployment had been retired so the ci
+# pool could scale to zero. docker/setup-buildx-action replaces all of it.
+#
+# The S3 layer cache on OCI Object Storage, and with it the ephemeral-storage
+# tuning. `--export-cache mode=max` writes every intermediate layer to disk
+# before shipping it, which is why those jobs carried
+# KUBERNETES_EPHEMERAL_STORAGE_REQUEST 12Gi / LIMIT 18Gi -- discord-bot measured
+# 16.4 GiB. A GitHub-hosted runner has roughly 14 GB, so the GitLab shape would
+# not have fitted. GitHub's own cache backend replaces it with no local
+# multiplier.
+#
+# The base64 wrapping of every OCI credential: OCI_USERNAME_64 and friends were
+# base64-encoded because GitLab masking requires single-line values with a
+# restricted character set. GitHub secrets have no such constraint, so they are
+# passed as-is and the decode step is gone.
+#
+# PLATFORM defaulted to linux/arm64 with no repo overriding it, which the
+# migration spec flagged as a hard part. Paired with ubuntu-24.04-arm it is a
+# native build rather than a QEMU cross-build, and arm64 runners are free for
+# public repos.
+#
+# Scans the pushed image for secrets, closing a real gap: docker-build-check.yml
+# scans every PR's build before merge, but nothing ever scanned the image this
+# workflow actually ships -- the two builds can differ (this one can carry
+# different build_args than the PR check), so a secret introduced only here
+# would reach the registry with no check at all. Runs against the same
+# single-platform build the push already produced (load: true below), not a
+# second build, so it costs one extra step, not one extra build.
+#
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: 'Build context directory'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to the Dockerfile, relative to the repo root'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      build_args:
+        description: 'Newline-separated build args (KEY=value per line)'
+        required: false
+        type: string
+        default: ''
+      platform:
+        description: >-
+          Target platform, or a comma-separated list for one multi-platform
+          image (e.g. linux/amd64,linux/arm64). A list sets up QEMU for the
+          platforms the runner cannot build natively, and the secret scan
+          then reads the runner-native variant pulled back from the registry
+          rather than a locally loaded build.
+        required: false
+        type: string
+        default: 'linux/arm64'
+      tag_override:
+        description: >-
+          When set, tags are <override> and <override>-<short sha> instead of
+          `latest` and <short sha>. Used by producers that publish variants.
+        required: false
+        type: string
+        default: ''
+      single_tag:
+        description: >-
+          Push only the primary tag, no immutable per-commit second tag.
+          Default false preserves today's behavior for every existing
+          consumer. For producers where nothing ever pulls a specific past
+          build -- a laptop-rebuilt dev tool, not a deployed workload -- an
+          unbounded per-merge tag is pure accumulation with no consumer, and
+          `secondary_tag` comes back empty rather than computed-but-unused.
+        required: false
+        type: boolean
+        default: false
+      cache:
+        description: 'Use the GitHub Actions layer cache'
+        required: false
+        type: boolean
+        default: true
+      scan_image:
+        description: 'Scan the pushed image for secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_extra_args:
+        description: >-
+          Extra flags for the image scan. Do NOT pass --fail; the invocation
+          below already sets it and trufflehog rejects a repeated flag.
+        required: false
+        type: string
+        default: '--only-verified'
+      runner_labels:
+        description: 'Runner labels as JSON array'
+        required: false
+        type: string
+        default: '["ubuntu-24.04-arm"]'
+      oidc_exchange_domain_url:
+        description: 'Identity domain URL the OCI token exchange is POSTed to (<this>/oauth2/v1/token)'
+        required: true
+        type: string
+      oidc_exchange_client_id:
+        description: 'Client id of the OCI token-exchange app'
+        required: true
+        type: string
+      # These three are INPUTS, not secrets, and that is load-bearing.
+      #
+      # GitHub refuses to set a job output whose value contains secret
+      # material, silently leaving it empty. The image reference is built from
+      # all three, so while they were secrets the `image` output came back
+      # blank in the calling workflow -- the push worked, but trigger-bump then
+      # sent an empty IMAGE_NAME to docker-apps, where an empty pipeline
+      # variable OVERRODE the job's own value and the bump failed with
+      # "IMAGE_NAME not configured on this job".
+      #
+      # They are also not credentials: a registry host, an object-storage
+      # namespace and a repository name. They were masked on GitLab only
+      # because GitLab masks broadly. Only oci_username and oci_token are
+      # secret.
+      registry:
+        description: 'OCIR registry host, e.g. iad.ocir.io'
+        required: true
+        type: string
+      namespace:
+        description: 'OCI object storage namespace'
+        required: true
+        type: string
+      repo_name:
+        description: 'Repository name within the namespace'
+        required: true
+        type: string
+    secrets:
+      oidc_exchange_client_secret:
+        description: >-
+          Client secret of the OCI token-exchange app. It only authenticates the app and
+          is useless without a GitHub token that the OCI trust accepts.
+        required: true
+      oci_tenancy_ocid:
+        description: 'OCI tenancy OCID, written into the session profile'
+        required: true
+    outputs:
+      image:
+        description: 'Full image reference without a tag'
+        value: ${{ jobs.push.outputs.image }}
+      primary_tag:
+        description: 'The moving tag (latest, or tag_override)'
+        value: ${{ jobs.push.outputs.primary_tag }}
+      secondary_tag:
+        description: 'The immutable per-commit tag, or empty when single_tag is true'
+        value: ${{ jobs.push.outputs.secondary_tag }}
+
+jobs:
+  push:
+    name: Build and push
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.refs.outputs.image }}
+      primary_tag: ${{ steps.refs.outputs.primary_tag }}
+      secondary_tag: ${{ steps.refs.outputs.secondary_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Resolve image reference and tags
+        id: refs
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          NAMESPACE: ${{ inputs.namespace }}
+          REPO_NAME: ${{ inputs.repo_name }}
+          TAG_OVERRIDE: ${{ inputs.tag_override }}
+          SINGLE_TAG: ${{ inputs.single_tag }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          IMAGE="${REGISTRY}/${NAMESPACE}/${REPO_NAME}"
+          if [ -n "${TAG_OVERRIDE}" ]; then
+            PRIMARY="${TAG_OVERRIDE}"
+            SECONDARY="${TAG_OVERRIDE}-${SHORT_SHA}"
+          else
+            PRIMARY="latest"
+            SECONDARY="${SHORT_SHA}"
+          fi
+          if [ "${SINGLE_TAG}" = "true" ]; then
+            TAGS="${IMAGE}:${PRIMARY}"
+            SECONDARY=""
+          else
+            TAGS="$(printf '%s:%s\n%s:%s' "${IMAGE}" "${PRIMARY}" "${IMAGE}" "${SECONDARY}")"
+          fi
+          {
+            echo "image=${IMAGE}"
+            echo "primary_tag=${PRIMARY}"
+            echo "secondary_tag=${SECONDARY}"
+            echo "tags<<TAGS_EOF"
+            echo "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Only for a multi-platform list: the default runner is arm64, so any
+      # amd64 leg is emulated. A single-platform call is native and skips it.
+      - name: Set up QEMU
+        if: contains(inputs.platform, ',')
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      # The exchange mirrors tnoff/terraform's .github/actions/oci-oidc-login (which is
+      # private); the things that are not in Oracle's docs and each cost a failed run:
+      # the exchange wants `public_key` as the base64 of the DER key on one line (the
+      # PEM is rejected with 400), and the registry's token endpoint takes a SIGNED
+      # request, not Basic auth (a service user has no auth-token capability, so
+      # Basic auth is refused as USER_DISABLED for any password).
+      - name: Exchange the GitHub OIDC token for an OCI session token
+        env:
+          DOMAIN_URL: ${{ inputs.oidc_exchange_domain_url }}
+          CLIENT_ID: ${{ inputs.oidc_exchange_client_id }}
+          CLIENT_SECRET: ${{ secrets.oidc_exchange_client_secret }}
+          TENANCY_OCID: ${{ secrets.oci_tenancy_ocid }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::no OIDC token endpoint: the calling job needs 'permissions: id-token: write'"
+            exit 1
+          fi
+          jwt=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r .value)
+          echo "::add-mask::${jwt}"
+
+          install -d -m 700 "${HOME}/.oci"
+          key="${HOME}/.oci/oidc_key.pem"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${key}" 2>/dev/null
+          chmod 600 "${key}"
+          der_b64=$(openssl rsa -in "${key}" -pubout -outform DER 2>/dev/null | base64 -w0)
+          fingerprint=$(openssl rsa -in "${key}" -pubout -outform DER 2>/dev/null \
+            | openssl md5 -c | sed 's/^.*= //')
+
+          body=$(mktemp)
+          code=$(curl -sS -o "${body}" -w '%{http_code}' \
+            -X POST "${DOMAIN_URL}/oauth2/v1/token" \
+            -u "${CLIENT_ID}:${CLIENT_SECRET}" \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode 'requested_token_type=urn:oci:token-type:oci-upst' \
+            --data-urlencode 'subject_token_type=jwt' \
+            --data-urlencode "subject_token=${jwt}" \
+            --data-urlencode "public_key=${der_b64}")
+          if [ "${code}" != "200" ]; then
+            # An error body carries no secrets (a 200 body is the token and is never printed).
+            echo "::error::OCI token exchange failed: HTTP ${code}"
+            cat "${body}"; echo
+            exit 1
+          fi
+          token=$(jq -r .token "${body}")
+          rm -f "${body}"
+          echo "::add-mask::${token}"
+          printf '%s' "${token}" > "${HOME}/.oci/oidc_token"
+          chmod 600 "${HOME}/.oci/oidc_token"
+          {
+            echo "[oidc]"
+            echo "tenancy=${TENANCY_OCID}"
+            echo "region=us-ashburn-1"
+            echo "fingerprint=${fingerprint}"
+            echo "key_file=${key}"
+            echo "security_token_file=${HOME}/.oci/oidc_token"
+          } > "${HOME}/.oci/config"
+          chmod 600 "${HOME}/.oci/config"
+
+      - name: Log in to OCIR with a signed bearer-token request
+        env:
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet oci-cli
+          out="${RUNNER_TEMP}/ocir-token.json"
+          oci --auth security_token --profile oidc raw-request --http-method GET \
+            --target-uri "https://${REGISTRY}/20180419/docker/token" > "${out}"
+          token=$(jq -r '.data.token // empty' "${out}")
+          rm -f "${out}"
+          if [ -z "${token}" ]; then
+            echo "::error::the registry returned no bearer token"
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          printf '%s' "${token}" | docker login "${REGISTRY}" -u BEARER_TOKEN --password-stdin
+
+      # Both tags in one invocation (or the one tag single_tag leaves). The
+      # GitLab template ran buildctl twice, once per tag, because a single
+      # buildctl build takes one --output; the second run was fully cached
+      # but still re-exported. build-push-action takes a tag list, so the
+      # image is built once and every tag points at the same digest -- which
+      # also avoids the "push displaces sibling tag" behaviour the fleet has
+      # hit before with identical digests. The list itself is computed in the
+      # resolve step above (steps.refs.outputs.tags), not inlined here, so
+      # single_tag only has to be branched on once.
+      # load: true is only possible for a SINGLE platform -- a multi-platform
+      # result is a manifest list, which can't be loaded into the local daemon
+      # at all, so a comma-separated inputs.platform turns it off and the scan
+      # step pulls the pushed image back instead. For a single platform it
+      # puts the just-pushed image in the local daemon, so the scan step reads
+      # the real pushed artifact without a second build or a registry pull
+      # (and without needing its own OCIR auth -- it never leaves the
+      # runner's local daemon).
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platform }}
+          build-args: ${{ inputs.build_args }}
+          push: true
+          load: ${{ !contains(inputs.platform, ',') }}
+          tags: ${{ steps.refs.outputs.tags }}
+          cache-from: ${{ inputs.cache && 'type=gha' || '' }}
+          cache-to: ${{ inputs.cache && 'type=gha,mode=min' || '' }}
+
+      # A multi-platform push is not in the local daemon (see load above), so
+      # pull it back before scanning. The daemon picks the runner's own
+      # platform from the manifest list, so only that variant is scanned --
+      # the platform list must include it. Already logged in to the registry.
+      - name: Pull pushed image for scanning
+        if: inputs.scan_image && contains(inputs.platform, ',')
+        env:
+          IMAGE: ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.primary_tag }}
+        run: docker pull "${IMAGE}"
+
+      # Same technique and the same belt-and-braces zero-byte guard as
+      # docker-build-check.yml's secret scan -- see that workflow for why the
+      # docker:// prefix and the byte-count assertion are both load-bearing.
+      - name: Scan pushed image for secrets
+        if: inputs.scan_image
+        env:
+          EXTRA_ARGS: ${{ inputs.trufflehog_extra_args }}
+          IMAGE: ${{ steps.refs.outputs.image }}:${{ steps.refs.outputs.primary_tag }}
+        run: |
+          set -euo pipefail
+          LOG=$(mktemp)
+          # EXTRA_ARGS is intentionally unquoted: it is a flag list, not one arg.
+          # shellcheck disable=SC2086
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            ghcr.io/trufflesecurity/trufflehog:latest \
+            docker --image "docker://${IMAGE}" --fail --no-update ${EXTRA_ARGS} \
+            2>&1 | tee "${LOG}"
+
+          BYTES=$(grep -o '"bytes": *[0-9]*' "${LOG}" | tail -1 | tr -dc '0-9')
+          if [ -z "${BYTES}" ] || [ "${BYTES}" -eq 0 ]; then
+            echo "::error::trufflehog scanned 0 bytes -- the image was not read, so this scan proves nothing."
+            exit 1
+          fi
+          echo "scanned ${BYTES} bytes"
