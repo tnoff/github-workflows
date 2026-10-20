@@ -274,12 +274,12 @@ analysis to the newest interpreter with the factor prefix so it runs once
 ```ini
 [testenv]
 commands =
-    py314: pylint mypkg/
-    py314: bandit -r mypkg/
+    py315: pylint mypkg/
+    py315: bandit -r mypkg/
     pytest --cov=mypkg tests/
 ```
 
-`py314` is also the leg whose coverage `diff-cover` reads. Bump the prefix with
+`py315` is also the leg whose coverage `diff-cover` reads. Bump the prefix with
 the newest `env_list` entry.
 
 ## Workflows that are not callable
