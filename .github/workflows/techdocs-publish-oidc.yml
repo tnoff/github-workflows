@@ -1,0 +1,237 @@
+name: Publish TechDocs (OIDC)
+
+# Same as techdocs-publish.yml, but the job publishes WITHOUT a stored S3 key
+# (tnoff/terraform#217). It exchanges its own GitHub OIDC token for a short-lived OCI
+# session token (the exchange in docker-push-oidc.yml) and syncs the generated site to
+# the TechDocs bucket with the OCI CLI. Which OCI user the job becomes, and which
+# prefix of the bucket it may write, is decided in OCI: a trust rule in terraform-admin
+# maps this repo's `sub` (a push to main) to a service user whose policy
+# (techdocs-publishers.tf) allows `manage objects` only under default/component/<name>/.
+# Nothing here chooses an identity.
+#
+# Why the OCI CLI and not `techdocs-cli publish`: that publisher speaks the S3 API, and a
+# session token cannot sign S3-compatible requests (rclone's session-token support does not
+# exist, and the trust issuing these tokens cannot also issue the resource principals the
+# in-cluster gateway uses; tracked on tnoff/terraform#217). `oci os object sync --delete`
+# does what the publisher did: upload the site under the entity prefix, skip unchanged files,
+# delete stale ones. Objects are stored as application/octet-stream, same as the publisher,
+# because Backstage sets the type from the file extension when it serves them.
+#
+# A NEW FILE rather than an option on techdocs-publish.yml, on purpose: this job requests
+# `id-token: write`, and a reusable workflow that asks for a permission its caller did not
+# grant fails at startup. Adding it to techdocs-publish.yml would break every existing
+# caller as soon as its pin moved.
+#
+# The caller job must grant `id-token: write`, pass the exchange client secret and the
+# tenancy OCID as secrets, and the exchange domain URL and client id as inputs. The caller
+# repo must have the immutable OIDC subject enabled (see terraform-admin ocir-pushers.tf).
+#
+# Usage in a consumer repo:
+#
+#   jobs:
+#     publish:
+#       permissions:
+#         contents: read
+#         id-token: write
+#       uses: tnoff/github-workflows/.github/workflows/techdocs-publish-oidc.yml@<sha>
+#       with:
+#         entity_ref: default/Component/<name>
+#         techdocs_bucket_name: ${{ vars.TECHDOCS_BUCKET_NAME }}
+#         oidc_exchange_domain_url: ${{ vars.OIDC_EXCHANGE_DOMAIN_URL }}
+#         oidc_exchange_client_id: ${{ vars.OIDC_EXCHANGE_CLIENT_ID }}
+#       secrets:
+#         oidc_exchange_client_secret: ${{ secrets.OIDC_EXCHANGE_CLIENT_SECRET }}
+#         oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+
+on:
+  workflow_call:
+    inputs:
+      entity_ref:
+        description: >-
+          Backstage entity uid, namespace/Kind/name (case-sensitive). Example:
+          default/Component/terraform-modules. Passed straight to
+          `techdocs-cli publish --entity`.
+        required: true
+        type: string
+      source_dir:
+        description: >-
+          Directory containing the mkdocs.yml to build, relative to the repo
+          root. Passed to `techdocs-cli generate --source-dir`. Defaults to
+          the repo root. Set it when one repo hosts several TechDocs sites
+          (one per entity, each with its own mkdocs.yml), and call this
+          workflow once per site with a matching entity_ref.
+        required: false
+        type: string
+        default: '.'
+      legacy_copy_readme_to_index:
+        description: >-
+          Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`, which
+          copies docs/README.md to docs/index.md before building. Defaults
+          false because it is actively harmful whenever docs/README.md
+          already exists: mkdocs treats the resulting index.md/README.md pair
+          as a conflict and silently drops README.md from the build, which
+          leaves every link that points at README.md -- including a
+          mkdocs.yml nav entry -- pointing at a page that was never
+          published. mkdocs already falls back to README.md as the implicit
+          homepage on its own when no index.md exists at all, so this flag
+          is only for the genuinely rare case of a docs/ with neither
+          index.md nor README.md.
+        required: false
+        type: boolean
+        default: false
+      techdocs_cli_version:
+        description: 'Pinned @techdocs/cli version, passed to npx as @techdocs/cli@<version>'
+        required: false
+        type: string
+        default: '1.12.0'
+      runner_labels:
+        description: 'Runner labels as JSON array (e.g., ["self-hosted", "oke"])'
+        required: false
+        type: string
+        default: '["ubuntu-24.04"]'
+      techdocs_bucket_name:
+        description: 'TechDocs bucket name'
+        required: true
+        type: string
+      oci_region:
+        description: 'Region of the TechDocs bucket'
+        required: false
+        type: string
+        default: 'us-sanjose-1'
+      oci_namespace:
+        description: 'OCI Object Storage namespace of the bucket'
+        required: false
+        type: string
+        default: 'tnoff'
+      oci_cli_version:
+        description: 'Pinned oci-cli version installed with pip'
+        required: false
+        type: string
+        default: '3.95.1'
+      oidc_exchange_domain_url:
+        description: 'Identity domain URL the OCI token exchange is POSTed to (<this>/oauth2/v1/token)'
+        required: true
+        type: string
+      oidc_exchange_client_id:
+        description: 'Client id of the OCI token-exchange app'
+        required: true
+        type: string
+    secrets:
+      oci_tenancy_ocid:
+        description: 'OCI tenancy OCID, written into the session profile'
+        required: true
+      oidc_exchange_client_secret:
+        description: 'Client secret of the OCI token-exchange app. It only authenticates the app and is useless without a GitHub token that the OCI trust accepts.'
+        required: true
+
+jobs:
+  publish:
+    name: Generate and publish
+    runs-on: ${{ fromJson(inputs.runner_labels) }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Generate docs
+        env:
+          CLI_VERSION: ${{ inputs.techdocs_cli_version }}
+          LEGACY_COPY: ${{ inputs.legacy_copy_readme_to_index }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          if [ "${LEGACY_COPY}" = "true" ]; then
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}" --legacyCopyReadmeMdToIndexMd
+          else
+            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}"
+          fi
+
+      # The exchange mirrors tnoff/terraform's .github/actions/oci-oidc-login (which is
+      # private); the things that are not in Oracle's docs and each cost a failed run:
+      # the exchange wants `public_key` as the base64 of the DER key on one line (the
+      # PEM is rejected with 400), and the registry's token endpoint takes a SIGNED
+      # request, not Basic auth (a service user has no auth-token capability, so
+      # Basic auth is refused as USER_DISABLED for any password).
+      - name: Exchange the GitHub OIDC token for an OCI session token
+        env:
+          DOMAIN_URL: ${{ inputs.oidc_exchange_domain_url }}
+          CLIENT_ID: ${{ inputs.oidc_exchange_client_id }}
+          CLIENT_SECRET: ${{ secrets.oidc_exchange_client_secret }}
+          TENANCY_OCID: ${{ secrets.oci_tenancy_ocid }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::no OIDC token endpoint: the calling job needs 'permissions: id-token: write'"
+            exit 1
+          fi
+          jwt=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r .value)
+          echo "::add-mask::${jwt}"
+
+          install -d -m 700 "${HOME}/.oci"
+          key="${HOME}/.oci/oidc_key.pem"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${key}" 2>/dev/null
+          chmod 600 "${key}"
+          der_b64=$(openssl rsa -in "${key}" -pubout -outform DER 2>/dev/null | base64 -w0)
+          fingerprint=$(openssl rsa -in "${key}" -pubout -outform DER 2>/dev/null \
+            | openssl md5 -c | sed 's/^.*= //')
+
+          body=$(mktemp)
+          code=$(curl -sS -o "${body}" -w '%{http_code}' \
+            -X POST "${DOMAIN_URL}/oauth2/v1/token" \
+            -u "${CLIENT_ID}:${CLIENT_SECRET}" \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode 'requested_token_type=urn:oci:token-type:oci-upst' \
+            --data-urlencode 'subject_token_type=jwt' \
+            --data-urlencode "subject_token=${jwt}" \
+            --data-urlencode "public_key=${der_b64}")
+          if [ "${code}" != "200" ]; then
+            # An error body carries no secrets (a 200 body is the token and is never printed).
+            echo "::error::OCI token exchange failed: HTTP ${code}"
+            cat "${body}"; echo
+            exit 1
+          fi
+          token=$(jq -r .token "${body}")
+          rm -f "${body}"
+          echo "::add-mask::${token}"
+          printf '%s' "${token}" > "${HOME}/.oci/oidc_token"
+          chmod 600 "${HOME}/.oci/oidc_token"
+          {
+            echo "[oidc]"
+            echo "tenancy=${TENANCY_OCID}"
+            echo "region=us-ashburn-1"
+            echo "fingerprint=${fingerprint}"
+            echo "key_file=${key}"
+            echo "security_token_file=${HOME}/.oci/oidc_token"
+          } > "${HOME}/.oci/config"
+          chmod 600 "${HOME}/.oci/config"
+
+      # techdocs-cli stores a site under <namespace>/<kind>/<name>/ in lower case
+      # (entity default/Component/Foo -> default/component/foo/). The policy matches that
+      # exact prefix, so a wrong entity_ref is refused by OCI, not silently written elsewhere.
+      - name: Publish docs
+        env:
+          ENTITY_REF: ${{ inputs.entity_ref }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
+          BUCKET: ${{ inputs.techdocs_bucket_name }}
+          REGION: ${{ inputs.oci_region }}
+          OCI_NAMESPACE: ${{ inputs.oci_namespace }}
+          OCI_CLI_VERSION: ${{ inputs.oci_cli_version }}
+        run: |
+          set -euo pipefail
+          site="${SOURCE_DIR%/}/site"
+          # `--delete` removes everything under the prefix that is not in the site, so refuse an
+          # empty or half-built site rather than wipe the entity's docs.
+          if [ ! -f "${site}/index.html" ] || [ ! -f "${site}/techdocs_metadata.json" ]; then
+            echo "::error::${site} has no index.html and techdocs_metadata.json: not publishing"
+            exit 1
+          fi
+          # sync would store an empty directory as a zero-byte "dir/" object
+          find "${site}" -type d -empty -delete
+          prefix="$(printf '%s' "${ENTITY_REF}" | tr '[:upper:]' '[:lower:]')/"
+          python3 -m pip install --quiet "oci-cli==${OCI_CLI_VERSION}"
+          oci --auth security_token --profile oidc os object sync \
+            --namespace-name "${OCI_NAMESPACE}" --bucket-name "${BUCKET}" --region "${REGION}" \
+            --src-dir "${site}" --prefix "${prefix}" --delete

@@ -174,6 +174,12 @@ the S3-compatible bucket, so each repo's CI must build and publish.
 
 This repo's own copy is `self-techdocs-publish.yml`.
 
+`techdocs-publish-oidc.yml` is the same publish without the stored `TECHDOCS_S3_*` key
+(tnoff/terraform#217): the job exchanges its GitHub OIDC token for an OCI session token and runs
+`oci os object sync --delete` into the entity's own prefix. It needs `id-token: write`, the
+exchange inputs and secrets the image push uses, and a policy for the repo in terraform-admin's
+`techdocs-publishers.tf`.
+
 ## Branch cleanup
 
 `bump-image-pin.yml` and Renovate push throwaway branches (`bump/*`,
