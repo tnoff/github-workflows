@@ -121,7 +121,9 @@ on:
         description: 'OCI tenancy OCID, written into the session profile'
         required: true
       oidc_exchange_client_secret:
-        description: 'Client secret of the OCI token-exchange app. It only authenticates the app and is useless without a GitHub token that the OCI trust accepts.'
+        description: >-
+          Client secret of the OCI token-exchange app. It only authenticates the app and
+          is useless without a GitHub token that the OCI trust accepts.
         required: true
 
 jobs:
