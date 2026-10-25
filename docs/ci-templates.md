@@ -158,31 +158,34 @@ models this as the `image-bump` API.)
 
 Backstage runs with `techdocs.builder: external`: the backend only reads from
 the S3-compatible bucket, so each repo's CI must build and publish.
-`techdocs-publish` does that on a GitHub-hosted runner (which has Docker, as
-`techdocs-cli generate` needs). A consumer needs:
+`techdocs-publish-oidc` does that on a GitHub-hosted runner (which has Docker, as
+`techdocs-cli generate` needs) and publishes with a short-lived OCI session token,
+not a stored key (tnoff/terraform#217): the job exchanges its GitHub OIDC token for the
+token and runs `oci os object sync --delete` into the entity's own prefix. (The earlier
+stored-key `techdocs-publish.yml` was retired once every caller had moved; revisions pinned by
+SHA still resolve.) A consumer needs:
 
 - `mkdocs.yml` (with `plugins: [techdocs-core]`) and a `docs/` directory, and
   `backstage.io/techdocs-ref: dir:.` on its `catalog-info.yaml` component;
 - a workflow triggered on `push` to `main` with `paths: ['docs/**',
   'mkdocs.yml', 'catalog-info.yaml']` (plus the workflow's own file),
   `concurrency: {group: techdocs-publish, cancel-in-progress: false}`;
+- `permissions: {contents: read, id-token: write}` on the caller;
 - `entity_ref` as `<namespace>/<Kind>/<name>`, case-sensitive
-  (e.g. `default/Component/github-workflows`);
-- the five `TECHDOCS_S3_*` secrets (access key id, secret key, bucket name,
-  endpoint, region), passed through explicitly. They are fleet-wide action
-  secrets provisioned by terraform.
+  (e.g. `default/Component/github-workflows`), and `techdocs_bucket_name`;
+- the exchange inputs and secrets the image push uses: variables `OIDC_EXCHANGE_DOMAIN_URL` and
+  `OIDC_EXCHANGE_CLIENT_ID` passed as `oidc_exchange_domain_url` / `oidc_exchange_client_id`, secrets
+  `OIDC_EXCHANGE_CLIENT_SECRET` and `OCI_TENANCY_OCID`;
+- a federated identity for the repo in terraform-admin's `techdocs-publishers.tf` (a user, a trust
+  rule on the repo's `sub`, and a policy limited to the repo's own prefixes), and the immutable OIDC
+  subject enabled on the repo.
 
 This repo's own copy is `self-techdocs-publish.yml`.
-
-`techdocs-publish-oidc.yml` is the same publish without the stored `TECHDOCS_S3_*` key
-(tnoff/terraform#217): the job exchanges its GitHub OIDC token for an OCI session token and runs
-`oci os object sync --delete` into the entity's own prefix. It needs `id-token: write`, the
-exchange inputs and secrets the image push uses, and a policy for the repo in terraform-admin's
-`techdocs-publishers.tf`.
 
 Set the optional `environment` input when the repo's other main-branch jobs would share the publish job's
 `sub` (tnoff/terraform, whose apply jobs run on main): the job then runs in that GitHub environment and its
 `sub` ends in `:environment:<name>` instead of `:ref:refs/heads/main`, so its trust rule matches only this job.
+A repo hosting several sites sets `source_dir` per site; the built site is always read from `./site`.
 
 ## Branch cleanup
 
