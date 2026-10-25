@@ -8,6 +8,7 @@
 | Name | Description | Type | Default | Required |
 | :--- | :---------- | :--- | :------ | :------: |
 | entity_ref | Backstage entity uid, namespace/Kind/name (case-sensitive). Example: default/Component/terraform-modules. Passed straight to `techdocs-cli publish --entity`. | `string` | n/a | yes |
+| environment | GitHub environment to run the job in, so the OIDC `sub` ends in `:environment:<name>` instead of `:ref:refs/heads/main`. Empty (the default) runs without an environment. Must match the subject of the repo's trust rule. | `string` | `` | no |
 | legacy_copy_readme_to_index | Pass --legacyCopyReadmeMdToIndexMd to `techdocs-cli generate`, which copies docs/README.md to docs/index.md before building. Defaults false because it is actively harmful whenever docs/README.md already exists: mkdocs treats the resulting index.md/README.md pair as a conflict and silently drops README.md from the build, which leaves every link that points at README.md -- including a mkdocs.yml nav entry -- pointing at a page that was never published. mkdocs already falls back to README.md as the implicit homepage on its own when no index.md exists at all, so this flag is only for the genuinely rare case of a docs/ with neither index.md nor README.md. | `boolean` | `false` | no |
 | oci_cli_version | Pinned oci-cli version installed with pip | `string` | `3.95.1` | no |
 | oci_namespace | OCI Object Storage namespace of the bucket | `string` | `tnoff` | no |
