@@ -180,6 +180,10 @@ This repo's own copy is `self-techdocs-publish.yml`.
 exchange inputs and secrets the image push uses, and a policy for the repo in terraform-admin's
 `techdocs-publishers.tf`.
 
+Set the optional `environment` input when the repo's other main-branch jobs would share the publish job's
+`sub` (tnoff/terraform, whose apply jobs run on main): the job then runs in that GitHub environment and its
+`sub` ends in `:environment:<name>` instead of `:ref:refs/heads/main`, so its trust rule matches only this job.
+
 ## Branch cleanup
 
 `bump-image-pin.yml` and Renovate push throwaway branches (`bump/*`,

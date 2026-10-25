@@ -26,6 +26,11 @@ name: Publish TechDocs (OIDC)
 # tenancy OCID as secrets, and the exchange domain URL and client id as inputs. The caller
 # repo must have the immutable OIDC subject enabled (see terraform-admin ocir-pushers.tf).
 #
+# `environment` (optional): run the job in a GitHub environment, which changes the token's
+# `sub` from `...:ref:refs/heads/main` to `...:environment:<name>`. Needed when the repo's
+# other main-branch jobs would otherwise share this job's `sub` and match its trust rule
+# (tnoff/terraform: its apply jobs also run on main). The environment must exist on the repo.
+#
 # Usage in a consumer repo:
 #
 #   jobs:
@@ -116,6 +121,14 @@ on:
         description: 'Client id of the OCI token-exchange app'
         required: true
         type: string
+      environment:
+        description: >-
+          GitHub environment to run the job in, so the OIDC `sub` ends in
+          `:environment:<name>` instead of `:ref:refs/heads/main`. Empty (the default) runs
+          without an environment. Must match the subject of the repo's trust rule.
+        required: false
+        type: string
+        default: ''
     secrets:
       oci_tenancy_ocid:
         description: 'OCI tenancy OCID, written into the session profile'
@@ -130,6 +143,8 @@ jobs:
   publish:
     name: Generate and publish
     runs-on: ${{ fromJson(inputs.runner_labels) }}
+    # null (not '') when unset: an empty environment name is rejected.
+    environment: ${{ inputs.environment != '' && inputs.environment || null }}
     permissions:
       contents: read
       id-token: write
