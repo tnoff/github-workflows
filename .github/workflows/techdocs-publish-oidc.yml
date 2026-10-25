@@ -159,11 +159,12 @@ jobs:
           SOURCE_DIR: ${{ inputs.source_dir }}
         run: |
           set -euo pipefail
+          # --output-dir is explicit: the publish step reads ./site whatever source_dir is.
+          args=(--source-dir "${SOURCE_DIR}" --output-dir site)
           if [ "${LEGACY_COPY}" = "true" ]; then
-            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}" --legacyCopyReadmeMdToIndexMd
-          else
-            npx --yes "@techdocs/cli@${CLI_VERSION}" generate --source-dir "${SOURCE_DIR}"
+            args+=(--legacyCopyReadmeMdToIndexMd)
           fi
+          npx --yes "@techdocs/cli@${CLI_VERSION}" generate "${args[@]}"
 
       # The exchange mirrors tnoff/terraform's .github/actions/oci-oidc-login (which is
       # private); the things that are not in Oracle's docs and each cost a failed run:
@@ -231,14 +232,16 @@ jobs:
       - name: Publish docs
         env:
           ENTITY_REF: ${{ inputs.entity_ref }}
-          SOURCE_DIR: ${{ inputs.source_dir }}
           BUCKET: ${{ inputs.techdocs_bucket_name }}
           REGION: ${{ inputs.oci_region }}
           OCI_NAMESPACE: ${{ inputs.oci_namespace }}
           OCI_CLI_VERSION: ${{ inputs.oci_cli_version }}
         run: |
           set -euo pipefail
-          site="${SOURCE_DIR%/}/site"
+          # Where "Generate docs" wrote it (--output-dir, relative to the repo root). NOT under
+          # source_dir: `generate --source-dir techdocs/x` still writes ./site, which is what broke
+          # the first docker-apps run (the guard below refused to publish; nothing was deleted).
+          site="site"
           # `--delete` removes everything under the prefix that is not in the site, so refuse an
           # empty or half-built site rather than wipe the entity's docs.
           if [ ! -f "${site}/index.html" ] || [ ! -f "${site}/techdocs_metadata.json" ]; then
