@@ -1,7 +1,8 @@
 name: Publish TechDocs (OIDC)
 
-# Same as techdocs-publish.yml, but the job publishes WITHOUT a stored S3 key
-# (tnoff/terraform#217). It exchanges its own GitHub OIDC token for a short-lived OCI
+# Builds a component's TechDocs site and publishes it WITHOUT a stored S3 key
+# (tnoff/terraform#217; it replaced the stored-key techdocs-publish.yml, which is retired).
+# It exchanges its own GitHub OIDC token for a short-lived OCI
 # session token (the exchange in docker-push-oidc.yml) and syncs the generated site to
 # the TechDocs bucket with the OCI CLI. Which OCI user the job becomes, and which
 # prefix of the bucket it may write, is decided in OCI: a trust rule in terraform-admin
@@ -16,11 +17,6 @@ name: Publish TechDocs (OIDC)
 # does what the publisher did: upload the site under the entity prefix, skip unchanged files,
 # delete stale ones. Objects are stored as application/octet-stream, same as the publisher,
 # because Backstage sets the type from the file extension when it serves them.
-#
-# A NEW FILE rather than an option on techdocs-publish.yml, on purpose: this job requests
-# `id-token: write`, and a reusable workflow that asks for a permission its caller did not
-# grant fails at startup. Adding it to techdocs-publish.yml would break every existing
-# caller as soon as its pin moved.
 #
 # The caller job must grant `id-token: write`, pass the exchange client secret and the
 # tenancy OCID as secrets, and the exchange domain URL and client id as inputs. The caller

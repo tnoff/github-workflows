@@ -1,11 +1,9 @@
 name: Publish TechDocs
 
-# This repo's OWN TechDocs publish, ported from the pattern in
-# tnoff/terraform-modules (this workflow's first caller -- see
-# techdocs-publish.yml's header). `self-` prefix per self-ci.yml's
+# This repo's OWN TechDocs publish. `self-` prefix per self-ci.yml's
 # convention: a LOCAL `uses:` path rather than a pinned
-# tnoff/github-workflows@<sha> ref, so a PR that edits techdocs-publish.yml
-# is published with the edited techdocs-publish.yml, not last release's copy.
+# tnoff/github-workflows@<sha> ref, so a PR that edits techdocs-publish-oidc.yml
+# is published with the edited techdocs-publish-oidc.yml, not last release's copy.
 #
 # Publishes with a short-lived OCI token from this job's GitHub OIDC identity, not a stored S3 key
 # (tnoff/terraform#217). OCI maps this repo's push to main to the user that may write only
@@ -18,7 +16,7 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - 'catalog-info.yaml'
-      - '.github/workflows/techdocs-publish.yml'
+      - '.github/workflows/techdocs-publish-oidc.yml'
       - '.github/workflows/self-techdocs-publish.yml'
 
 concurrency:
