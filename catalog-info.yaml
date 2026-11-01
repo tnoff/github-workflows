@@ -24,3 +24,23 @@ spec:
   type: library
   owner: group:default/admin
   lifecycle: production
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: fleet-mirror
+  description: >-
+    Hourly GitHub-to-GitLab push (fleet-mirror.yml) that keeps the frozen GitLab copies
+    current as break-glass. Fleet automation, not a reusable workflow. Pushes as the
+    tnoff-ci service account using GITLAB_MIRROR_TOKEN, and mints a tnoff-ci App token
+    per run to read the fleet. Never force-pushes; a diverged repo fails the run.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: service
+  owner: group:default/admin
+  lifecycle: production
+  subcomponentOf: component:default/github-workflows
+  dependsOn:
+    - resource:default/gitlab-ci-api-key
+    - resource:default/ci-github-app-key
