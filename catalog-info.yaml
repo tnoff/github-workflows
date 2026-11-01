@@ -32,7 +32,7 @@ metadata:
   description: >-
     Hourly GitHub-to-GitLab push (fleet-mirror.yml) that keeps the frozen GitLab copies
     current as break-glass. Fleet automation, not a reusable workflow. Pushes as the
-    tnoff-ci service account using GITLAB_MIRROR_TOKEN, and mints a tnoff-ci App token
+    tnoff-ci service account using GITLAB_MIRROR_TOKEN (minted and rotated by terraform/infra), and mints a tnoff-ci App token
     per run to read the fleet. Never force-pushes; a diverged repo fails the run.
   annotations:
     backstage.io/techdocs-ref: dir:.
