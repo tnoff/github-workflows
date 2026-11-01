@@ -4,6 +4,7 @@ site_description: 'Reusable GitHub Actions workflows -- the CI and release surfa
 nav:
   - Home: README.md
   - Reusable workflows: ci-templates.md
+  - Fleet mirror: fleet-mirror.md
   - Development: DEVELOPMENT.md
   - Agents/Conventions: AGENTS.md
   - Contributing: CONTRIBUTING.md

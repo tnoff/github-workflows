@@ -301,7 +301,7 @@ the newest `env_list` entry.
 |---|---|
 | `notify-failure.yml` | Per-repo `workflow_run` notifier template: Discord alert when any workflow on a non-PR event fails. Must exist on a repo's default branch to fire; each consumer carries its own copy |
 | `startup-failure-sweep.yml` | Hourly poll of every repo the `tnoff-ci` App can see for `startup_failure` runs, failed notifiers and dead `schedule:` workflows, which emit no event. Single instance, lives here |
-| `fleet-mirror.yml` | Hourly push of GitHub `main` to the frozen GitLab copies (read-only history); never force-pushes |
+| `fleet-mirror.yml` | Hourly push of GitHub `main` to the frozen GitLab copies (read-only history); never force-pushes. See [fleet-mirror.md](fleet-mirror.md) |
 | `self-ci.yml`, `self-scheduled.yml`, `self-release.yml`, `self-techdocs-publish.yml` | This repo's own PR checks, weekly Renovate, per-workflow releases and TechDocs. They call the library through local `./` paths so a PR is tested with its own edits |
 
 Scheduled GitHub cron slots are frequently dropped, so "hourly" workflows
