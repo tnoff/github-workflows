@@ -30,7 +30,7 @@ GitHub's. Everything else is skipped or fails loudly.
 
 | Secret on this repo | Backstage resource | Source | Used for |
 |---|---|---|---|
-| `GITLAB_MIRROR_TOKEN` | `resource:default/gitlab-ci-api-key` | `gitlab_ci_api_key` in terraform-admin | GitLab API reads and the push. Needs `write_repository` and the group Maintainer role (protected `main` requires it) |
+| `GITLAB_MIRROR_TOKEN` | `resource:default/gitlab-ci-api-key` | `gitlab_ci_api_key` in terraform-admin | GitLab API reads (project list, remote mirrors, branches) and the push. Needs scopes `read_api` and `write_repository` (or `api`) and the group Maintainer role (protected `main` requires it) |
 | `CI_APP_CLIENT_ID`, `CI_APP_PRIVATE_KEY` | `resource:default/ci-github-app-key` | The `tnoff-ci` GitHub App | Minting the per-run GitHub token |
 
 `GITLAB_MIRROR_TOKEN` is written to this repo's Actions secrets by
@@ -40,8 +40,11 @@ written here only, not to every repo: one consumer is one copy to rotate.
 
 ## Rotating the GitLab token
 
-1. Mint a new token on the `tnoff-ci` service account with `write_repository`
-   (add `read_repository` if you like). Do not mint it on a human user.
+1. Mint a new token on the `tnoff-ci` service account with `read_api` and
+   `write_repository` (or `api`). `write_repository` alone fails every API call
+   with a 403, which the 2026-11-01 rotation hit. A token's scopes cannot be
+   edited afterwards, so a wrong scope means minting again. Do not mint it on a
+   human user.
 2. Follow the operator-rotated procedure in terraform-admin's
    `docs/secret-rotation.md` for `gitlab_ci_api_key`.
 3. Land a change under `terraform/infra/` so `apply:infra` rewrites
@@ -64,7 +67,7 @@ written here only, not to every repo: one consumer is one copy to rotate.
 | Symptom | Cause | What to do |
 |---|---|---|
 | `GITLAB_MIRROR_TOKEN is unset` | The secret is missing from this repo | Apply `terraform/infra`; it writes the secret |
-| Every repo fails with 401/403 | Token revoked, expired or lost its role | Rotate it (above) |
+| Fails at the first GitLab call with 403 | Token lacks `read_api`, was revoked, or lost its Maintainer role | Check scopes and role; re-mint if a scope is missing (above) |
 | One repo fails `not a fast-forward` | Someone wrote to the GitLab copy | Resolve by hand; the job will not force-push |
 | App token step fails | `tnoff-ci` key rotated without updating `CI_APP_*` here | Update this repo's `CI_APP_*` secrets by hand (the bootstrap stack cannot own its own repo) |
 
